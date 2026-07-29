@@ -27,7 +27,7 @@ export function TicketListPage() {
   return (
     <div style={{ padding: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 20 }}>Tickets</h1>
+        <h1 style={{ margin: 0, fontSize: 24 }}>Tickets</h1>
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
           {STATUSES.map((s) => (
@@ -88,5 +88,5 @@ export function TicketListPage() {
   )
 }
 
-const th: CSSProperties = { padding: '8px 4px', fontSize: 13, color: '#6b7280' }
-const td: CSSProperties = { padding: '8px 4px', fontSize: 14 }
+const th: CSSProperties = { padding: '8px 4px', fontSize: 15, color: '#6b7280' }
+const td: CSSProperties = { padding: '8px 4px', fontSize: 16 }

@@ -34,9 +34,6 @@ The frontend container is a production build (`vite build`) served by
 nginx, which proxies `/api` to the `app` service — there's no hot
 reload here. For that, use the local dev server below.
 
-> Note: if your Docker install's buildkit fails with a bind-mount
-> error under WSL, use `make up-legacy` instead (buildkit disabled).
-
 Other useful targets: `make down`, `make ps`, `make logs`.
 
 ## Run locally (dev)

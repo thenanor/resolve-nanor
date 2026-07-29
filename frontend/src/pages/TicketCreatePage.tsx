@@ -28,7 +28,7 @@ export function TicketCreatePage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 480 }}>
-      <h1 style={{ fontSize: 20 }}>New Ticket</h1>
+      <h1 style={{ fontSize: 24 }}>New Ticket</h1>
       <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <label>
           Subject

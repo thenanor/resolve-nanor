@@ -23,7 +23,7 @@ export function AuditLogPage() {
   return (
     <div style={{ padding: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 20, margin: 0 }}>Audit Log</h1>
+        <h1 style={{ fontSize: 24, margin: 0 }}>Audit Log</h1>
         <input
           placeholder="Filter by ticket id"
           value={ticketId}
@@ -60,7 +60,7 @@ export function AuditLogPage() {
                 <td style={td}>
                   <Link to={`/tickets/${e.ticketId}`}>{e.ticketId}</Link>
                 </td>
-                <td style={{ ...td, fontFamily: 'monospace', fontSize: 12 }}>
+                <td style={{ ...td, fontFamily: 'monospace', fontSize: 14 }}>
                   {JSON.stringify(e.details)}
                 </td>
               </tr>
@@ -72,5 +72,5 @@ export function AuditLogPage() {
   )
 }
 
-const th = { padding: '8px 4px', fontSize: 13, color: '#6b7280' }
-const td = { padding: '8px 4px', fontSize: 14 }
+const th = { padding: '8px 4px', fontSize: 15, color: '#6b7280' }
+const td = { padding: '8px 4px', fontSize: 16 }

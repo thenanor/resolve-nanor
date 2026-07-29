@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up up-legacy down down-v ps logs db backend frontend install test test-backend test-frontend typecheck-frontend build-backend build-frontend all vet fmt lint lint-backend lint-frontend ci
+.PHONY: help up down down-v ps logs db backend frontend install test test-backend test-frontend typecheck-frontend build-backend build-frontend all vet fmt lint lint-backend lint-frontend ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -9,9 +9,6 @@ help: ## Show this help
 
 up: ## Build and start Postgres + the Go app + the frontend in Docker
 	docker compose up -d --build
-
-up-legacy: ## Same as `up`, but with buildkit disabled (fixes some WSL/Docker Desktop bind-mount errors)
-	DOCKER_BUILDKIT=0 docker compose up -d --build
 
 down: ## Stop the Docker stack (keeps data)
 	docker compose down

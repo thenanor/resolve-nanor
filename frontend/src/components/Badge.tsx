@@ -23,7 +23,7 @@ function Badge({ label, color }: { label: string; color: string }) {
         display: 'inline-block',
         padding: '2px 8px',
         borderRadius: 999,
-        fontSize: 12,
+        fontSize: 14,
         fontWeight: 600,
         color: '#fff',
         backgroundColor: color,

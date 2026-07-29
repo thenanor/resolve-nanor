@@ -70,11 +70,11 @@ export function TicketDetailPage() {
   return (
     <div style={{ padding: 24, maxWidth: 720 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <h1 style={{ fontSize: 20, margin: 0 }}>{ticket.subject}</h1>
+        <h1 style={{ fontSize: 24, margin: 0 }}>{ticket.subject}</h1>
         <StatusBadge status={ticket.status} />
         <PriorityBadge priority={ticket.priority} />
       </div>
-      <p style={{ color: '#6b7280', fontSize: 13 }}>
+      <p style={{ color: '#6b7280', fontSize: 15 }}>
         {ticket.id} · {ticket.customerEmail} · created {new Date(ticket.createdAt).toLocaleString()}
       </p>
       <p>{ticket.description}</p>
@@ -82,7 +82,7 @@ export function TicketDetailPage() {
       {error && <p style={{ color: '#dc2626' }}>{error}</p>}
 
       <div style={{ margin: '16px 0' }}>
-        <strong style={{ fontSize: 13, color: '#6b7280' }}>Move to:</strong>{' '}
+        <strong style={{ fontSize: 15, color: '#6b7280' }}>Move to:</strong>{' '}
         {nextStates.length === 0 && <span style={{ color: '#6b7280' }}>(terminal state)</span>}
         {nextStates.map((s) => (
           <button
@@ -96,7 +96,7 @@ export function TicketDetailPage() {
         ))}
       </div>
 
-      <h2 style={{ fontSize: 16 }}>Comments</h2>
+      <h2 style={{ fontSize: 18 }}>Comments</h2>
       {ticket.comments.length === 0 && <p style={{ color: '#6b7280' }}>No comments yet.</p>}
       <ul style={{ listStyle: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {ticket.comments.map((c) => (
@@ -108,7 +108,7 @@ export function TicketDetailPage() {
               backgroundColor: c.internal ? '#fef3c7' : '#f3f4f6',
             }}
           >
-            <div style={{ fontSize: 13, color: '#6b7280', display: 'flex', gap: 8 }}>
+            <div style={{ fontSize: 15, color: '#6b7280', display: 'flex', gap: 8 }}>
               <strong>{c.author}</strong>
               <span>{new Date(c.at).toLocaleString()}</span>
               {c.internal && <span style={{ fontWeight: 700 }}>internal</span>}
@@ -119,7 +119,7 @@ export function TicketDetailPage() {
       </ul>
 
       <form onSubmit={onAddComment} style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <h3 style={{ fontSize: 14, marginBottom: 0 }}>Add comment</h3>
+        <h3 style={{ fontSize: 16, marginBottom: 0 }}>Add comment</h3>
         <input
           placeholder="Your name"
           value={commentAuthor}
@@ -133,7 +133,7 @@ export function TicketDetailPage() {
           rows={3}
           style={{ padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6 }}
         />
-        <label style={{ fontSize: 13 }}>
+        <label style={{ fontSize: 15 }}>
           <input
             type="checkbox"
             checked={commentInternal}

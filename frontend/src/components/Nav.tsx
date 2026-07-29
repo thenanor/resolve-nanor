@@ -40,7 +40,7 @@ export function Nav() {
         Stats
       </NavLink>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <label htmlFor="actor" style={{ fontSize: 13, color: '#6b7280' }}>
+        <label htmlFor="actor" style={{ fontSize: 15, color: '#6b7280' }}>
           Acting as
         </label>
         <input

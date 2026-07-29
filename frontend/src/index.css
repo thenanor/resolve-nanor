@@ -1,6 +1,7 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 18px;
 }
 
 * {
@@ -9,6 +10,8 @@
 
 body {
   margin: 0;
+  background: #ffffff;
+  color: #111827;
 }
 
 a {
