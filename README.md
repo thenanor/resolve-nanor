@@ -9,7 +9,7 @@ from an original NestJS + TypeORM reference implementation. Behavior
 
 ## Stack
 
-- `backend/` — Go 1.25, [chi](https://github.com/go-chi/chi) router,
+- `backend/` — Go 1.26, [chi](https://github.com/go-chi/chi) router,
   [pgx](https://github.com/jackc/pgx) (no ORM), Postgres 16.
 - `frontend/` — Vite + React + TypeScript, react-router-dom, plain
   `fetch` (no state library).
@@ -55,14 +55,29 @@ make install    # npm install
 make frontend   # npm run dev — http://localhost:5173, proxies /api -> :3000
 ```
 
-## Test
+## Test & lint
 
 ```bash
-make test                 # Go unit tests against a fake in-memory repository, no DB needed
+make test                 # Go unit tests (fake repository, no DB) + frontend unit tests (Vitest)
+make test-backend          # just the Go tests
+make test-frontend         # just the Vitest tests
 make vet                   # go vet
+make lint                   # golangci-lint (backend) + oxlint (frontend)
 make typecheck-frontend    # tsc -b --noEmit
 make build-frontend        # production build
+
+make ci                     # everything CI runs, in one shot
 ```
+
+Frontend unit tests (Vitest + React Testing Library) cover the pure
+status-transition map, the actor-storage logic in the API client, and
+badge component rendering — see `frontend/src/**/*.test.{ts,tsx}`.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request: backend build,
+`go vet`, `go test`, and `golangci-lint`; frontend `oxlint`, Vitest,
+a TypeScript typecheck, and a production build.
 
 ## Endpoints (v0)
 

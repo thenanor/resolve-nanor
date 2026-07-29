@@ -217,7 +217,9 @@ func TestChangeStatus_RejectsReopeningClosedTicket(t *testing.T) {
 	ctx := context.Background()
 	ticket, _ := svc.Create(ctx, "test", validInput)
 	for _, to := range []string{"open", "in_progress", "resolved", "closed"} {
-		svc.ChangeStatus(ctx, "test", ticket.ID, to)
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
 	}
 
 	_, err := svc.ChangeStatus(ctx, "test", ticket.ID, "open")
@@ -282,8 +284,12 @@ func TestAuditTrail_RecordsCreationStatusChangesAndComments(t *testing.T) {
 	svc, audit := newTestService()
 	ctx := context.Background()
 	ticket, _ := svc.Create(ctx, "narek", validInput)
-	svc.ChangeStatus(ctx, "narek", ticket.ID, "open")
-	svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hi"})
+	if _, err := svc.ChangeStatus(ctx, "narek", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
 
 	entries := audit.forTicket(ticket.ID)
 	if len(entries) != 3 {

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up up-legacy down down-v ps logs db backend frontend install test test-backend typecheck-frontend build-frontend vet fmt
+.PHONY: help up up-legacy down down-v ps logs db backend frontend install test test-backend test-frontend typecheck-frontend build-frontend vet fmt lint lint-backend lint-frontend ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -41,10 +41,13 @@ frontend: ## Run the Vite dev server (http://localhost:5173, proxies /api -> :30
 
 ## --- Checks ---
 
-test: test-backend ## Run all tests
+test: test-backend test-frontend ## Run all tests
 
 test-backend: ## Run Go unit tests (fake repository, no DB needed)
 	cd backend && go test ./...
+
+test-frontend: ## Run frontend unit tests (Vitest)
+	cd frontend && npm test
 
 vet: ## Run go vet
 	cd backend && go vet ./...
@@ -52,8 +55,18 @@ vet: ## Run go vet
 fmt: ## Run gofmt on the backend
 	cd backend && gofmt -l -w .
 
+lint: lint-backend lint-frontend ## Run all linters
+
+lint-backend: ## Run golangci-lint on the backend
+	cd backend && golangci-lint run ./...
+
+lint-frontend: ## Run oxlint (TS/JS linter) on the frontend
+	cd frontend && npm run lint
+
 typecheck-frontend: ## Typecheck the frontend
 	cd frontend && npx tsc -b --noEmit
 
 build-frontend: ## Production build the frontend
 	cd frontend && npm run build
+
+ci: vet lint test typecheck-frontend build-frontend ## Run everything CI runs, locally
