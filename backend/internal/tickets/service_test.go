@@ -283,8 +283,8 @@ func TestAddComment_RejectsEmptyBody(t *testing.T) {
 func TestAuditTrail_RecordsCreationStatusChangesAndComments(t *testing.T) {
 	svc, audit := newTestService()
 	ctx := context.Background()
-	ticket, _ := svc.Create(ctx, "narek", validInput)
-	if _, err := svc.ChangeStatus(ctx, "narek", ticket.ID, "open"); err != nil {
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+	if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hi"}); err != nil {
@@ -301,8 +301,8 @@ func TestAuditTrail_RecordsCreationStatusChangesAndComments(t *testing.T) {
 			t.Errorf("entries[%d].Action = %q, want %q", i, entries[i].Action, want)
 		}
 	}
-	if entries[0].Actor != "narek" {
-		t.Errorf("entries[0].Actor = %q, want narek", entries[0].Actor)
+	if entries[0].Actor != "nanor" {
+		t.Errorf("entries[0].Actor = %q, want nanor", entries[0].Actor)
 	}
 	if entries[1].Details["from"] != "new" || entries[1].Details["to"] != "open" {
 		t.Errorf("entries[1].Details = %v, want {from: new, to: open}", entries[1].Details)

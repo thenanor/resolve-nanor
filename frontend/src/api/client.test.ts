@@ -11,8 +11,8 @@ describe('actor storage', () => {
   })
 
   it('persists and returns a custom actor', () => {
-    setActor('narek')
-    expect(getActor()).toBe('narek')
+    setActor('nanor')
+    expect(getActor()).toBe('nanor')
   })
 
   it('falls back to "api" when set with an empty string', () => {

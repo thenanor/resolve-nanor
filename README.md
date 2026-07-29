@@ -1,11 +1,7 @@
 # Resolve
 
-A small ticketing system — "Resolve v0 Core Tickets" — ported to a
-**Go (chi + pgx) backend** and a **React (Vite + TypeScript) frontend**,
-from an original NestJS + TypeORM reference implementation. Behavior
-(validation rules, status machine, audit trail, stats) is preserved
-1:1 with the reference — see
-`backend/internal/tickets/service_test.go` for the behavioral contract.
+A small ticketing system — "Resolve v0 Core Tickets" — built in 
+**Go (chi + pgx) backend** and a **React (Vite + TypeScript) frontend**.
 
 ## Stack
 
@@ -23,23 +19,25 @@ make help    # list every available target
 ## Run everything with Docker (recommended)
 
 ```bash
-make up                   # Postgres 16 + the Go app
+make up                   # Postgres 16 + the Go app + the frontend
 curl localhost:3000/stats
+open http://localhost:5173
 ```
 
-Port 3000 busy? `APP_PORT=3300 make up`.
+Port 3000 or 5173 busy? `APP_PORT=3300 make up` / `FRONTEND_PORT=8080 make up`.
 Config is env-driven — `cp .env.example .env` to override ports or
 database credentials (never commit `.env`). Data lives in the
 `pgdata` volume — it survives restarts and rebuilds. Reset everything:
 `make down-v`.
 
+The frontend container is a production build (`vite build`) served by
+nginx, which proxies `/api` to the `app` service — there's no hot
+reload here. For that, use the local dev server below.
+
 > Note: if your Docker install's buildkit fails with a bind-mount
 > error under WSL, use `make up-legacy` instead (buildkit disabled).
 
 Other useful targets: `make down`, `make ps`, `make logs`.
-
-Then, separately, run the frontend dev server (see below) — it isn't
-containerized in v0.
 
 ## Run locally (dev)
 

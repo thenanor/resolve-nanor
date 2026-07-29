@@ -5,9 +5,9 @@
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-## --- Docker (db + app) ---
+## --- Docker (db + app + frontend) ---
 
-up: ## Build and start Postgres + the Go app in Docker
+up: ## Build and start Postgres + the Go app + the frontend in Docker
 	docker compose up -d --build
 
 up-legacy: ## Same as `up`, but with buildkit disabled (fixes some WSL/Docker Desktop bind-mount errors)
