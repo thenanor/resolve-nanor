@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up up-legacy down down-v ps logs db backend frontend install test test-backend test-frontend typecheck-frontend build-frontend vet fmt lint lint-backend lint-frontend ci
+.PHONY: help up up-legacy down down-v ps logs db backend frontend install test test-backend test-frontend typecheck-frontend build-backend build-frontend all vet fmt lint lint-backend lint-frontend ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -66,7 +66,14 @@ lint-frontend: ## Run oxlint (TS/JS linter) on the frontend
 typecheck-frontend: ## Typecheck the frontend
 	cd frontend && npx tsc -b --noEmit
 
-build-frontend: ## Production build the frontend
+## --- Build ---
+
+all: build-backend build-frontend ## Build both the backend binary and the frontend production bundle
+
+build-backend: ## Compile the Go API to backend/api
+	cd backend && go build -o api ./cmd/api
+
+build-frontend: ## Production build the frontend (frontend/dist)
 	cd frontend && npm run build
 
 ci: vet lint test typecheck-frontend build-frontend ## Run everything CI runs, locally

@@ -62,7 +62,10 @@ make test-frontend         # just the Vitest tests
 make vet                   # go vet
 make lint                   # golangci-lint (backend) + oxlint (frontend)
 make typecheck-frontend    # tsc -b --noEmit
-make build-frontend        # production build
+
+make all                    # build backend/api + frontend/dist (no Docker)
+make build-backend          # just the Go binary
+make build-frontend         # just the production frontend bundle
 
 make ci                     # everything CI runs, in one shot
 ```
