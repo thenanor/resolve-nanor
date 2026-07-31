@@ -32,6 +32,14 @@ resource "aws_security_group" "this" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "Frontend"
+    from_port   = var.frontend_port
+    to_port     = var.frontend_port
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -59,5 +67,14 @@ resource "aws_instance" "this" {
   tags = {
     Name    = var.name
     Project = "resolve-course"
+  }
+}
+
+resource "aws_eip" "this" {
+  instance = aws_instance.this.id
+  domain   = "vpc"
+
+  tags = {
+    Name = var.name
   }
 }
