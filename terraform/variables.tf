@@ -17,9 +17,15 @@ variable "instance_type" {
 }
 
 variable "app_port" {
-  description = "Port the app is published on"
+  description = "Port the API is published on"
   type        = number
   default     = 3000
+}
+
+variable "frontend_port" {
+  description = "Port the frontend UI is published on"
+  type        = number
+  default     = 5173
 }
 
 variable "ssh_public_key_path" {
