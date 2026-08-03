@@ -64,6 +64,40 @@ func (r *PostgresRepository) FindByID(ctx context.Context, id string) (*Ticket, 
 }
 
 func (r *PostgresRepository) FindAll(ctx context.Context, filter Filter) ([]Ticket, error) {
+	query, args := findTicketsQuery(filter)
+	return r.queryTickets(ctx, query, args)
+}
+
+// FindPage applies filter, then LIMIT/OFFSET. It asks for one row past
+// page.Limit so HasMore can be derived from what came back instead of a
+// separate COUNT(*) query — the cost is O(page size), not O(table size),
+// which is also what a cursor-based implementation would give us.
+func (r *PostgresRepository) FindPage(ctx context.Context, filter Filter, page Pagination) (Page, error) {
+	query, args := findTicketsQuery(filter)
+	args = append(args, page.Limit+1, page.Offset)
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)-1, len(args))
+
+	tickets, err := r.queryTickets(ctx, query, args)
+	if err != nil {
+		return Page{}, err
+	}
+
+	hasMore := len(tickets) > page.Limit
+	if hasMore {
+		tickets = tickets[:page.Limit]
+	}
+	return Page{
+		Tickets: tickets,
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: hasMore,
+	}, nil
+}
+
+// findTicketsQuery builds the shared SELECT + filter WHERE clause used by
+// both FindAll and FindPage. The ORDER BY includes id as a tiebreaker so
+// rows with an identical created_at still sort consistently across pages.
+func findTicketsQuery(filter Filter) (string, []any) {
 	query := `
 		SELECT id, subject, description, customer_email, priority, status, created_at, updated_at, resolved_at
 		FROM tickets
@@ -81,8 +115,11 @@ func (r *PostgresRepository) FindAll(ctx context.Context, filter Filter) ([]Tick
 	if len(conds) > 0 {
 		query += " WHERE " + strings.Join(conds, " AND ")
 	}
-	query += " ORDER BY created_at ASC"
+	query += " ORDER BY created_at ASC, id ASC"
+	return query, args
+}
 
+func (r *PostgresRepository) queryTickets(ctx context.Context, query string, args []any) ([]Ticket, error) {
 	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err

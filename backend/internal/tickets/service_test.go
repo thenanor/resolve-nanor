@@ -3,6 +3,7 @@ package tickets
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -58,6 +59,38 @@ func (f *fakeRepository) FindByID(_ context.Context, id string) (*Ticket, error)
 }
 
 func (f *fakeRepository) FindAll(_ context.Context, filter Filter) ([]Ticket, error) {
+	return f.findFiltered(filter), nil
+}
+
+// FindPage mirrors PostgresRepository.FindPage: filter, sort, then slice.
+// HasMore is derived from whether a row exists past the requested limit,
+// not from a separate count, matching the production implementation.
+func (f *fakeRepository) FindPage(_ context.Context, filter Filter, page Pagination) (Page, error) {
+	matched := f.findFiltered(filter)
+
+	start := page.Offset
+	if start > len(matched) {
+		start = len(matched)
+	}
+	end := start + page.Limit
+	hasMore := end < len(matched)
+	if end > len(matched) {
+		end = len(matched)
+	}
+
+	tickets := append([]Ticket{}, matched[start:end]...)
+	return Page{
+		Tickets: tickets,
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: hasMore,
+	}, nil
+}
+
+// findFiltered returns matching tickets ordered like the real repository's
+// "ORDER BY created_at ASC, id ASC" so pagination in tests is deterministic
+// despite fakeRepository storing tickets in a map.
+func (f *fakeRepository) findFiltered(filter Filter) []Ticket {
 	var result []Ticket
 	for _, t := range f.byID {
 		if filter.Status != "" && t.Status != filter.Status {
@@ -70,7 +103,13 @@ func (f *fakeRepository) FindAll(_ context.Context, filter Filter) ([]Ticket, er
 		cp.Comments = append([]Comment{}, t.Comments...)
 		result = append(result, cp)
 	}
-	return result, nil
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CreatedAt != result[j].CreatedAt {
+			return result[i].CreatedAt < result[j].CreatedAt
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result
 }
 
 // fakeAudit is a capturing AuditRecorder used to assert on the audit trail
