@@ -229,6 +229,79 @@ func TestChangeStatus_RejectsReopeningClosedTicket(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_AllowsReopeningResolvedTicket(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	for _, to := range []string{"open", "in_progress", "resolved"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
+	}
+
+	resolved, _ := svc.FindByID(ctx, ticket.ID)
+	if resolved.ResolvedAt == nil {
+		t.Fatal("resolvedAt is nil after resolving, want set")
+	}
+
+	reopened, err := svc.ChangeStatus(ctx, "test", ticket.ID, "open")
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	if reopened.Status != StatusOpen {
+		t.Errorf("status = %q, want open", reopened.Status)
+	}
+	if reopened.ResolvedAt != nil {
+		t.Error("resolvedAt is set after reopening, want nil")
+	}
+
+	// The reopened ticket should be able to walk the happy path again.
+	for _, to := range []string{"in_progress", "resolved", "closed"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s after reopen: %v", to, err)
+		}
+	}
+}
+
+func TestChangeStatus_KeepsResolvedAtWhenClosingWithoutReopen(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	for _, to := range []string{"open", "in_progress", "resolved", "closed"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
+	}
+
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if final.ResolvedAt == nil {
+		t.Error("resolvedAt is nil after closing, want it to remain set from resolution")
+	}
+}
+
+func TestChangeStatus_RejectsReopeningFromNonResolvedStates(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, "open"); err != nil {
+		t.Fatalf("transition to open: %v", err)
+	}
+
+	_, err := svc.ChangeStatus(ctx, "test", ticket.ID, "in_progress")
+	if err != nil {
+		t.Fatalf("transition to in_progress: %v", err)
+	}
+
+	_, err = svc.ChangeStatus(ctx, "test", ticket.ID, "open")
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected ValidationError reopening from in_progress, got %v", err)
+	}
+}
+
 func TestChangeStatus_ErrorNamesAllowedNextStates(t *testing.T) {
 	svc, _ := newTestService()
 	ctx := context.Background()
@@ -309,6 +382,29 @@ func TestAuditTrail_RecordsCreationStatusChangesAndComments(t *testing.T) {
 	}
 	if entries[2].Actor != "agent-1" {
 		t.Errorf("entries[2].Actor = %q, want agent-1", entries[2].Actor)
+	}
+}
+
+func TestAuditTrail_RecordsReopen(t *testing.T) {
+	svc, audit := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+	for _, to := range []string{"open", "in_progress", "resolved"} {
+		if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	last := entries[len(entries)-1]
+	if last.Action != "ticket.status_changed" {
+		t.Errorf("last entry action = %q, want ticket.status_changed", last.Action)
+	}
+	if last.Details["from"] != "resolved" || last.Details["to"] != "open" {
+		t.Errorf("last entry details = %v, want {from: resolved, to: open}", last.Details)
 	}
 }
 

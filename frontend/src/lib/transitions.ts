@@ -8,6 +8,6 @@ export const ALLOWED_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   open: ['in_progress'],
   in_progress: ['waiting_customer', 'resolved'],
   waiting_customer: ['in_progress'],
-  resolved: ['closed'],
+  resolved: ['closed', 'open'],
   closed: [],
 }

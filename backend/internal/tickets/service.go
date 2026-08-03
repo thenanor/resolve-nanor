@@ -108,9 +108,13 @@ func (s *Service) ChangeStatus(ctx context.Context, actor, id, to string) (*Tick
 
 	from := t.Status
 	t.Status = Status(to)
-	if t.Status == StatusResolved {
+	switch {
+	case t.Status == StatusResolved:
 		resolvedAt := now()
 		t.ResolvedAt = &resolvedAt
+	case from == StatusResolved && t.Status == StatusOpen:
+		// Reopening clears the prior resolution timestamp.
+		t.ResolvedAt = nil
 	}
 	t.UpdatedAt = now()
 
