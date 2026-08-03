@@ -11,6 +11,11 @@ import (
 
 var emailRe = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 
+const (
+	DefaultPageLimit = 50
+	MaxPageLimit     = 200
+)
+
 // AuditRecorder is the slice of audit.Service that tickets depends on. It is
 // declared here (consumer side) to avoid an import cycle between the
 // tickets and audit packages.
@@ -160,6 +165,25 @@ func (s *Service) AddComment(ctx context.Context, actor, id string, input Commen
 
 func (s *Service) FindAll(ctx context.Context, filter Filter) ([]Ticket, error) {
 	return s.repo.FindAll(ctx, filter)
+}
+
+// FindPage applies filter first, then bounds the matching rows to a page.
+// A zero Limit takes the default; limits above MaxPageLimit are clamped
+// rather than rejected, matching common list-endpoint conventions.
+func (s *Service) FindPage(ctx context.Context, filter Filter, page Pagination) (Page, error) {
+	if page.Limit == 0 {
+		page.Limit = DefaultPageLimit
+	}
+	if page.Limit < 0 {
+		return Page{}, invalid("limit must be a positive integer")
+	}
+	if page.Limit > MaxPageLimit {
+		page.Limit = MaxPageLimit
+	}
+	if page.Offset < 0 {
+		return Page{}, invalid("offset must be zero or a positive integer")
+	}
+	return s.repo.FindPage(ctx, filter, page)
 }
 
 func (s *Service) FindByID(ctx context.Context, id string) (*Ticket, error) {

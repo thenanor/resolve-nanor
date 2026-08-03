@@ -2,7 +2,10 @@ package tickets
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -56,11 +59,40 @@ func (h *Handler) findAll(w http.ResponseWriter, r *http.Request) {
 		Status:   Status(r.URL.Query().Get("status")),
 		Priority: Priority(r.URL.Query().Get("priority")),
 	}
-	list, err := h.service.FindAll(r.Context(), filter)
+
+	page, err := parsePagination(r.URL.Query())
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.FindPage(r.Context(), filter, page)
 	if respondIfError(w, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, list)
+	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+// parsePagination reads limit/offset off the query string. It only rejects
+// malformed values (not-an-integer); range validation (negative, over the
+// max) is a business rule owned by Service.FindPage.
+func parsePagination(q url.Values) (Pagination, error) {
+	var page Pagination
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Pagination{}, fmt.Errorf("limit must be an integer")
+		}
+		page.Limit = n
+	}
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Pagination{}, fmt.Errorf("offset must be an integer")
+		}
+		page.Offset = n
+	}
+	return page, nil
 }
 
 func (h *Handler) findOne(w http.ResponseWriter, r *http.Request) {

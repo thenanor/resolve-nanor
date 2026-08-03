@@ -55,13 +55,26 @@ export interface AddCommentInput {
   internal: boolean
 }
 
+interface TicketPage {
+  tickets: Ticket[]
+  limit: number
+  offset: number
+  hasMore: boolean
+}
+
 export const api = {
-  listTickets: (filter: { status?: string; priority?: string } = {}) => {
+  // GET /tickets now returns a page envelope (tickets + limit/offset/hasMore)
+  // rather than a bare array, so offset pagination can later grow a cursor
+  // field without another breaking response-shape change. This call still
+  // returns Ticket[] since the list page doesn't have pagination controls yet.
+  listTickets: (filter: { status?: string; priority?: string; limit?: number; offset?: number } = {}) => {
     const params = new URLSearchParams()
     if (filter.status) params.set('status', filter.status)
     if (filter.priority) params.set('priority', filter.priority)
+    if (filter.limit != null) params.set('limit', String(filter.limit))
+    if (filter.offset != null) params.set('offset', String(filter.offset))
     const qs = params.toString()
-    return request<Ticket[]>(`/tickets${qs ? `?${qs}` : ''}`)
+    return request<TicketPage>(`/tickets${qs ? `?${qs}` : ''}`).then((page) => page.tickets)
   },
 
   getTicket: (id: string) => request<Ticket>(`/tickets/${id}`),
