@@ -229,6 +229,65 @@ func TestChangeStatus_RejectsReopeningClosedTicket(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_ReopensResolvedTicket(t *testing.T) {
+	svc, audit := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	for _, to := range []string{"open", "in_progress", "resolved"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
+	}
+
+	reopened, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open")
+	if err != nil {
+		t.Fatalf("unexpected error reopening: %v", err)
+	}
+	if reopened.Status != StatusOpen {
+		t.Errorf("status = %q, want open", reopened.Status)
+	}
+	if reopened.ResolvedAt != nil {
+		t.Errorf("resolvedAt = %v, want nil after reopening", *reopened.ResolvedAt)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	last := entries[len(entries)-1]
+	if last.Action != "ticket.status_changed" {
+		t.Errorf("last action = %q, want ticket.status_changed", last.Action)
+	}
+	if last.Details["from"] != "resolved" || last.Details["to"] != "open" {
+		t.Errorf("last details = %v, want {from: resolved, to: open}", last.Details)
+	}
+
+	// A reopened ticket can walk the happy path to resolved/closed again.
+	for _, to := range []string{"in_progress", "resolved"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
+	}
+	reResolved, _ := svc.FindByID(ctx, ticket.ID)
+	if reResolved.ResolvedAt == nil {
+		t.Error("resolvedAt is nil, want set after resolving again")
+	}
+}
+
+func TestChangeStatus_RejectsReopeningNonResolvedTicket(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := svc.ChangeStatus(ctx, "test", ticket.ID, "open")
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
 func TestChangeStatus_ErrorNamesAllowedNextStates(t *testing.T) {
 	svc, _ := newTestService()
 	ctx := context.Background()

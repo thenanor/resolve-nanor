@@ -111,6 +111,10 @@ func (s *Service) ChangeStatus(ctx context.Context, actor, id, to string) (*Tick
 	if t.Status == StatusResolved {
 		resolvedAt := now()
 		t.ResolvedAt = &resolvedAt
+	} else if from == StatusResolved && t.Status != StatusClosed {
+		// Reopening: the ticket is no longer resolved as of any timestamp.
+		// Closing a resolved ticket, by contrast, keeps resolvedAt intact.
+		t.ResolvedAt = nil
 	}
 	t.UpdatedAt = now()
 

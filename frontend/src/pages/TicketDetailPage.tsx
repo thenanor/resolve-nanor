@@ -91,7 +91,7 @@ export function TicketDetailPage() {
             onClick={() => onChangeStatus(s)}
             style={{ marginRight: 8, padding: '4px 10px' }}
           >
-            {s.replace('_', ' ')}
+            {ticket.status === 'resolved' && s === 'open' ? 'reopen' : s.replace('_', ' ')}
           </button>
         ))}
       </div>

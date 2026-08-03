@@ -94,9 +94,16 @@ a TypeScript typecheck, and a production build.
 
 ```
 new → open → in_progress → resolved → closed
-              ↑        ↓
-           waiting_customer
+        ↑     ↑        ↓       │
+        └─────┴────────┘       │
+           waiting_customer    │
+        ↑                      │
+        └── reopen ────────────┘
 ```
+
+A resolved ticket can be reopened back to `open` (e.g. the customer replies with a
+new problem); `resolvedAt` is cleared until it's resolved again. `closed` remains
+terminal.
 
 ## Frontend pages
 

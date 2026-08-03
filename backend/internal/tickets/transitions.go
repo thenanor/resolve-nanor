@@ -6,6 +6,6 @@ var AllowedTransitions = map[Status][]Status{
 	StatusOpen:            {StatusInProgress},
 	StatusInProgress:      {StatusWaitingCustomer, StatusResolved},
 	StatusWaitingCustomer: {StatusInProgress},
-	StatusResolved:        {StatusClosed},
+	StatusResolved:        {StatusClosed, StatusOpen},
 	StatusClosed:          {},
 }
