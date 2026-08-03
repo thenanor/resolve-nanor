@@ -5,12 +5,14 @@ import "os"
 type Config struct {
 	Port        string
 	DatabaseURL string
+	Version     string
 }
 
 func Load() Config {
 	return Config{
 		Port:        getEnv("PORT", "3000"),
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://resolve:resolve@localhost:5432/resolve"),
+		Version:     getEnv("VERSION", "dev"),
 	}
 }
 
