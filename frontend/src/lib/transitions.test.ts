@@ -6,11 +6,15 @@ describe('ALLOWED_TRANSITIONS', () => {
     expect(ALLOWED_TRANSITIONS.new).toEqual(['open'])
     expect(ALLOWED_TRANSITIONS.open).toEqual(['in_progress'])
     expect(ALLOWED_TRANSITIONS.in_progress).toEqual(['waiting_customer', 'resolved'])
-    expect(ALLOWED_TRANSITIONS.resolved).toEqual(['closed'])
+    expect(ALLOWED_TRANSITIONS.resolved).toEqual(['closed', 'in_progress'])
   })
 
   it('allows looping between in_progress and waiting_customer', () => {
     expect(ALLOWED_TRANSITIONS.waiting_customer).toEqual(['in_progress'])
+  })
+
+  it('allows reopening a resolved ticket back to in_progress', () => {
+    expect(ALLOWED_TRANSITIONS.resolved).toContain('in_progress')
   })
 
   it('treats closed as a terminal state', () => {

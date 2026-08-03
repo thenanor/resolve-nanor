@@ -229,6 +229,60 @@ func TestChangeStatus_RejectsReopeningClosedTicket(t *testing.T) {
 	}
 }
 
+func TestChangeStatus_AllowsReopeningResolvedTicket(t *testing.T) {
+	svc, audit := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	for _, to := range []string{"open", "in_progress", "resolved"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
+	}
+
+	resolved, _ := svc.FindByID(ctx, ticket.ID)
+	if resolved.ResolvedAt == nil {
+		t.Fatal("resolvedAt is nil after resolving, want set")
+	}
+
+	reopened, err := svc.ChangeStatus(ctx, "test", ticket.ID, "in_progress")
+	if err != nil {
+		t.Fatalf("reopen: unexpected error: %v", err)
+	}
+	if reopened.Status != StatusInProgress {
+		t.Errorf("status = %q, want in_progress", reopened.Status)
+	}
+	if reopened.ResolvedAt != nil {
+		t.Errorf("resolvedAt = %v, want nil after reopening", *reopened.ResolvedAt)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	last := entries[len(entries)-1]
+	if last.Action != "ticket.status_changed" || last.Details["from"] != "resolved" || last.Details["to"] != "in_progress" {
+		t.Errorf("last audit entry = %+v, want status_changed resolved->in_progress", last)
+	}
+}
+
+func TestChangeStatus_ReResolvingAfterReopenSetsNewResolvedAt(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	for _, to := range []string{"open", "in_progress", "resolved", "in_progress", "resolved"} {
+		if _, err := svc.ChangeStatus(ctx, "test", ticket.ID, to); err != nil {
+			t.Fatalf("transition to %s: %v", to, err)
+		}
+	}
+
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if final.Status != StatusResolved {
+		t.Errorf("status = %q, want resolved", final.Status)
+	}
+	if final.ResolvedAt == nil {
+		t.Error("resolvedAt is nil, want set after re-resolving")
+	}
+}
+
 func TestChangeStatus_ErrorNamesAllowedNextStates(t *testing.T) {
 	svc, _ := newTestService()
 	ctx := context.Background()
