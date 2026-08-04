@@ -126,18 +126,74 @@ func TestListAudit_HTTP_ReturnsEntriesNewestFirst(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	var entries []AuditEntry
-	if err := json.NewDecoder(rec.Body).Decode(&entries); err != nil {
+	var page AuditPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("len(entries) = %d, want 2", len(entries))
+	if len(page.Entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2", len(page.Entries))
 	}
-	if entries[0].Action != "ticket.status_changed" {
-		t.Errorf("entries[0].Action = %q, want ticket.status_changed", entries[0].Action)
+	if page.Entries[0].Action != "ticket.status_changed" {
+		t.Errorf("entries[0].Action = %q, want ticket.status_changed", page.Entries[0].Action)
 	}
-	if entries[1].Action != "ticket.created" {
-		t.Errorf("entries[1].Action = %q, want ticket.created", entries[1].Action)
+	if page.Entries[1].Action != "ticket.created" {
+		t.Errorf("entries[1].Action = %q, want ticket.created", page.Entries[1].Action)
+	}
+	if page.Limit != DefaultPageLimit {
+		t.Errorf("limit = %d, want %d", page.Limit, DefaultPageLimit)
+	}
+}
+
+func TestListAudit_HTTP_RespectsLimitAndOffset(t *testing.T) {
+	repo := newFakeRepository()
+	audit := &fakeAudit{}
+	svc := NewService(repo, audit)
+	h := NewHandler(svc)
+	ctx := context.Background()
+
+	ticket, err := svc.Create(ctx, "nanor", validInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	req := httptest.NewRequest(http.MethodGet, "/tickets/"+ticket.ID+"/audit?limit=1", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var page AuditPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(page.Entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(page.Entries))
+	}
+	if page.Entries[0].Action != "ticket.status_changed" {
+		t.Errorf("entries[0].Action = %q, want ticket.status_changed", page.Entries[0].Action)
+	}
+	if !page.HasMore {
+		t.Error("hasMore = false, want true")
+	}
+}
+
+func TestListAudit_HTTP_RejectsNonIntegerLimit(t *testing.T) {
+	h := newTestHandler(t, 0)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	req := httptest.NewRequest(http.MethodGet, "/tickets/tkt_missing/audit?limit=not-a-number", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 

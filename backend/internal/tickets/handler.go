@@ -141,11 +141,17 @@ func (h *Handler) addComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.service.ListAudit(r.Context(), chi.URLParam(r, "id"))
+	page, err := parsePagination(r.URL.Query())
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.ListAudit(r.Context(), chi.URLParam(r, "id"), page)
 	if respondIfError(w, err) {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, entries)
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 // respondIfError writes the appropriate error response and returns true if

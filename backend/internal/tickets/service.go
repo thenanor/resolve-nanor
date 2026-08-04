@@ -183,38 +183,88 @@ func (s *Service) FindAll(ctx context.Context, filter Filter) ([]Ticket, error) 
 // A zero Limit takes the default; limits above MaxPageLimit are clamped
 // rather than rejected, matching common list-endpoint conventions.
 func (s *Service) FindPage(ctx context.Context, filter Filter, page Pagination) (Page, error) {
+	page, err := normalizePage(page)
+	if err != nil {
+		return Page{}, err
+	}
+	return s.repo.FindPage(ctx, filter, page)
+}
+
+// normalizePage applies the pagination conventions shared by FindPage and
+// ListAudit: a zero Limit takes the default, limits above MaxPageLimit are
+// clamped rather than rejected, and negative Limit/Offset are rejected.
+func normalizePage(page Pagination) (Pagination, error) {
 	if page.Limit == 0 {
 		page.Limit = DefaultPageLimit
 	}
 	if page.Limit < 0 {
-		return Page{}, invalid("limit must be a positive integer")
+		return Pagination{}, invalid("limit must be a positive integer")
 	}
 	if page.Limit > MaxPageLimit {
 		page.Limit = MaxPageLimit
 	}
 	if page.Offset < 0 {
-		return Page{}, invalid("offset must be zero or a positive integer")
+		return Pagination{}, invalid("offset must be zero or a positive integer")
 	}
-	return s.repo.FindPage(ctx, filter, page)
+	return page, nil
 }
 
-// ListAudit returns id's audit trail, newest first. The repository lists
+// AuditPage is one page of a ticket's audit trail, newest first. It mirrors
+// Page's shape (entries + limit/offset/hasMore) for consistency with
+// FindPage.
+type AuditPage struct {
+	Entries []AuditEntry `json:"entries"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"hasMore"`
+}
+
+// ListAudit returns id's audit trail, newest first, bounded to a page using
+// the same limit/offset conventions as FindPage. The repository lists
 // chronologically (oldest first, matching how entries are recorded), so the
 // reversal happens here rather than being duplicated across repository
 // implementations and test fakes.
-func (s *Service) ListAudit(ctx context.Context, id string) ([]AuditEntry, error) {
+//
+// AuditRecorder.List has no limit/offset of its own — it always returns a
+// ticket's full audit trail — so pagination is applied to the in-memory
+// result here rather than pushed down to a query. AuditRecorder is backed by
+// backend/internal/audit, which this package cannot modify (see the
+// protect-audit hook), so adding LIMIT/OFFSET at the SQL level isn't
+// available from here.
+func (s *Service) ListAudit(ctx context.Context, id string, page Pagination) (AuditPage, error) {
 	if _, err := s.FindByID(ctx, id); err != nil {
-		return nil, err
+		return AuditPage{}, err
 	}
+	page, err := normalizePage(page)
+	if err != nil {
+		return AuditPage{}, err
+	}
+
 	entries, err := s.audit.List(ctx, id)
 	if err != nil {
-		return nil, err
+		return AuditPage{}, err
 	}
 	newestFirst := make([]AuditEntry, len(entries))
 	for i, e := range entries {
 		newestFirst[len(entries)-1-i] = e
 	}
-	return newestFirst, nil
+
+	start := page.Offset
+	if start > len(newestFirst) {
+		start = len(newestFirst)
+	}
+	end := start + page.Limit
+	hasMore := end < len(newestFirst)
+	if end > len(newestFirst) {
+		end = len(newestFirst)
+	}
+
+	return AuditPage{
+		Entries: append([]AuditEntry{}, newestFirst[start:end]...),
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: hasMore,
+	}, nil
 }
 
 func (s *Service) FindByID(ctx context.Context, id string) (*Ticket, error) {
