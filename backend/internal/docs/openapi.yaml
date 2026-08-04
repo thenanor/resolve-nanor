@@ -145,6 +145,24 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /tickets/{id}/audit:
+    get:
+      tags: [tickets, audit]
+      summary: List a ticket's audit entries, newest first
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntry"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /audit:
     get:
       tags: [audit]

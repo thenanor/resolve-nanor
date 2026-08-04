@@ -16,11 +16,23 @@ const (
 	MaxPageLimit     = 200
 )
 
+// AuditEntry mirrors the fields of audit.Entry that tickets exposes over its
+// ticket-scoped audit endpoint. It is declared here (consumer side), like
+// AuditRecorder below, so tickets does not depend on the audit package.
+type AuditEntry struct {
+	Actor    string         `json:"actor"`
+	Action   string         `json:"action"`
+	TicketID string         `json:"ticketId"`
+	Details  map[string]any `json:"details"`
+	At       string         `json:"at"`
+}
+
 // AuditRecorder is the slice of audit.Service that tickets depends on. It is
 // declared here (consumer side) to avoid an import cycle between the
 // tickets and audit packages.
 type AuditRecorder interface {
 	Record(ctx context.Context, actor, action, ticketID string, details map[string]any) error
+	List(ctx context.Context, ticketID string) ([]AuditEntry, error)
 }
 
 type CreateInput struct {
@@ -184,6 +196,25 @@ func (s *Service) FindPage(ctx context.Context, filter Filter, page Pagination) 
 		return Page{}, invalid("offset must be zero or a positive integer")
 	}
 	return s.repo.FindPage(ctx, filter, page)
+}
+
+// ListAudit returns id's audit trail, newest first. The repository lists
+// chronologically (oldest first, matching how entries are recorded), so the
+// reversal happens here rather than being duplicated across repository
+// implementations and test fakes.
+func (s *Service) ListAudit(ctx context.Context, id string) ([]AuditEntry, error) {
+	if _, err := s.FindByID(ctx, id); err != nil {
+		return nil, err
+	}
+	entries, err := s.audit.List(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	newestFirst := make([]AuditEntry, len(entries))
+	for i, e := range entries {
+		newestFirst[len(entries)-1-i] = e
+	}
+	return newestFirst, nil
 }
 
 func (s *Service) FindByID(ctx context.Context, id string) (*Ticket, error) {

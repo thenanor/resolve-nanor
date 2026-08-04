@@ -130,6 +130,17 @@ func (f *fakeAudit) Record(_ context.Context, actor, action, ticketID string, de
 	return nil
 }
 
+// List mirrors PostgresRepository.List's chronological (oldest-first)
+// ordering, so ListAudit's newest-first reversal is exercised against
+// realistic input rather than an already-reversed fake.
+func (f *fakeAudit) List(_ context.Context, ticketID string) ([]AuditEntry, error) {
+	entries := []AuditEntry{}
+	for _, e := range f.forTicket(ticketID) {
+		entries = append(entries, AuditEntry{Actor: e.Actor, Action: e.Action, TicketID: e.TicketID, Details: e.Details})
+	}
+	return entries, nil
+}
+
 func (f *fakeAudit) forTicket(ticketID string) []auditRecord {
 	var out []auditRecord
 	for _, e := range f.entries {
@@ -348,6 +359,41 @@ func TestAuditTrail_RecordsCreationStatusChangesAndComments(t *testing.T) {
 	}
 	if entries[2].Actor != "agent-1" {
 		t.Errorf("entries[2].Actor = %q, want agent-1", entries[2].Actor)
+	}
+}
+
+func TestListAudit_ReturnsEntriesNewestFirst(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+	if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := svc.ListAudit(ctx, ticket.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantActions := []string{"ticket.commented", "ticket.status_changed", "ticket.created"}
+	if len(entries) != len(wantActions) {
+		t.Fatalf("len(entries) = %d, want %d", len(entries), len(wantActions))
+	}
+	for i, want := range wantActions {
+		if entries[i].Action != want {
+			t.Errorf("entries[%d].Action = %q, want %q", i, entries[i].Action, want)
+		}
+	}
+}
+
+func TestListAudit_404sOnUnknownTicket(t *testing.T) {
+	svc, _ := newTestService()
+	_, err := svc.ListAudit(context.Background(), "tkt_missing")
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected NotFoundError, got %v", err)
 	}
 }
 

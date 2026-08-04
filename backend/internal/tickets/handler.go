@@ -27,6 +27,7 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Get("/{id}", h.findOne)
 		r.Post("/{id}/status", h.changeStatus)
 		r.Post("/{id}/comments", h.addComment)
+		r.Get("/{id}/audit", h.listAudit)
 	})
 }
 
@@ -137,6 +138,14 @@ func (h *Handler) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, c)
+}
+
+func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.service.ListAudit(r.Context(), chi.URLParam(r, "id"))
+	if respondIfError(w, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, entries)
 }
 
 // respondIfError writes the appropriate error response and returns true if
