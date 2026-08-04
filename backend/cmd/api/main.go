@@ -12,6 +12,7 @@ import (
 
 	"resolve/internal/audit"
 	"resolve/internal/config"
+	"resolve/internal/docs"
 	"resolve/internal/health"
 	"resolve/internal/migrations"
 	"resolve/internal/stats"
@@ -48,6 +49,7 @@ func main() {
 	audit.NewHandler(auditService).Mount(r)
 	stats.NewHandler(ticketsService).Mount(r)
 	health.NewHandler(cfg.Version).Mount(r)
+	docs.NewHandler().Mount(r)
 
 	log.Printf("resolve listening on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
