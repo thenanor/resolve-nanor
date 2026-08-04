@@ -90,6 +90,10 @@ a TypeScript typecheck, and a production build.
 - `GET /audit` — every mutation, with actor (from `X-Actor` header)
 - `GET /stats` — counts by status/priority + average resolution minutes
 
+Interactive docs (Swagger UI): `http://localhost:3000/docs` — spec at
+`http://localhost:3000/openapi.yaml` (also checked in at
+`backend/internal/docs/openapi.yaml`).
+
 ## Status machine
 
 ```
