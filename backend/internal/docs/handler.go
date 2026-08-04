@@ -43,10 +43,10 @@ func (h *Handler) Mount(r chi.Router) {
 
 func (h *Handler) spec(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/yaml")
-	w.Write(spec)
+	_, _ = w.Write(spec)
 }
 
 func (h *Handler) ui(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(uiPage))
+	_, _ = w.Write([]byte(uiPage))
 }
