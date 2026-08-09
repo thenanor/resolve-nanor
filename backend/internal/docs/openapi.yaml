@@ -145,6 +145,26 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /tickets/{id}/audit:
+    get:
+      tags: [tickets, audit]
+      summary: List a ticket's audit entries, newest first
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /audit:
     get:
       tags: [audit]
@@ -192,6 +212,20 @@ components:
       schema:
         type: string
         default: api
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Max rows to return. Defaults to 50, clamped to 200.
+      schema:
+        type: integer
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Rows to skip before collecting the page. Defaults to 0.
+      schema:
+        type: integer
 
   responses:
     BadRequest:
@@ -330,6 +364,20 @@ components:
         at:
           type: string
           format: date-time
+
+    AuditPage:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
 
     StatsResponse:
       type: object

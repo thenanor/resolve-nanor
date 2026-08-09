@@ -39,7 +39,7 @@ func main() {
 	auditService := audit.NewService(auditRepo)
 
 	ticketsRepo := tickets.NewPostgresRepository(pool)
-	ticketsService := tickets.NewService(ticketsRepo, auditService)
+	ticketsService := tickets.NewService(ticketsRepo, ticketsAuditAdapter{auditService})
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -60,4 +60,33 @@ func main() {
 func applySchema(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, migrations.Schema)
 	return err
+}
+
+// ticketsAuditAdapter satisfies tickets.AuditRecorder by delegating to
+// audit.Service, translating audit.Entry into tickets.AuditEntry so neither
+// package needs to import the other.
+type ticketsAuditAdapter struct {
+	svc *audit.Service
+}
+
+func (a ticketsAuditAdapter) Record(ctx context.Context, actor, action, ticketID string, details map[string]any) error {
+	return a.svc.Record(ctx, actor, action, ticketID, details)
+}
+
+func (a ticketsAuditAdapter) List(ctx context.Context, ticketID string) ([]tickets.AuditEntry, error) {
+	entries, err := a.svc.List(ctx, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tickets.AuditEntry, len(entries))
+	for i, e := range entries {
+		out[i] = tickets.AuditEntry{
+			Actor:    e.Actor,
+			Action:   e.Action,
+			TicketID: e.TicketID,
+			Details:  e.Details,
+			At:       e.At,
+		}
+	}
+	return out, nil
 }

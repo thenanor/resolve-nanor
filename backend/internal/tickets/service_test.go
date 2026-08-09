@@ -130,6 +130,17 @@ func (f *fakeAudit) Record(_ context.Context, actor, action, ticketID string, de
 	return nil
 }
 
+// List mirrors PostgresRepository.List's chronological (oldest-first)
+// ordering, so ListAudit's newest-first reversal is exercised against
+// realistic input rather than an already-reversed fake.
+func (f *fakeAudit) List(_ context.Context, ticketID string) ([]AuditEntry, error) {
+	entries := []AuditEntry{}
+	for _, e := range f.forTicket(ticketID) {
+		entries = append(entries, AuditEntry{Actor: e.Actor, Action: e.Action, TicketID: e.TicketID, Details: e.Details})
+	}
+	return entries, nil
+}
+
 func (f *fakeAudit) forTicket(ticketID string) []auditRecord {
 	var out []auditRecord
 	for _, e := range f.entries {
@@ -348,6 +359,115 @@ func TestAuditTrail_RecordsCreationStatusChangesAndComments(t *testing.T) {
 	}
 	if entries[2].Actor != "agent-1" {
 		t.Errorf("entries[2].Actor = %q, want agent-1", entries[2].Actor)
+	}
+}
+
+func TestListAudit_ReturnsEntriesNewestFirst(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+	if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := svc.ListAudit(ctx, ticket.ID, Pagination{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantActions := []string{"ticket.commented", "ticket.status_changed", "ticket.created"}
+	if len(page.Entries) != len(wantActions) {
+		t.Fatalf("len(entries) = %d, want %d", len(page.Entries), len(wantActions))
+	}
+	for i, want := range wantActions {
+		if page.Entries[i].Action != want {
+			t.Errorf("entries[%d].Action = %q, want %q", i, page.Entries[i].Action, want)
+		}
+	}
+	if page.Limit != DefaultPageLimit {
+		t.Errorf("limit = %d, want %d", page.Limit, DefaultPageLimit)
+	}
+	if page.Offset != 0 {
+		t.Errorf("offset = %d, want 0", page.Offset)
+	}
+	if page.HasMore {
+		t.Error("hasMore = true, want false")
+	}
+}
+
+func TestListAudit_RespectsLimitAndOffset(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+	if _, err := svc.ChangeStatus(ctx, "nanor", ticket.ID, "open"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// newest first: [commented, status_changed, created]
+	page, err := svc.ListAudit(ctx, ticket.ID, Pagination{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(page.Entries) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(page.Entries))
+	}
+	if page.Entries[0].Action != "ticket.status_changed" {
+		t.Errorf("entries[0].Action = %q, want ticket.status_changed", page.Entries[0].Action)
+	}
+	if !page.HasMore {
+		t.Error("hasMore = false, want true")
+	}
+}
+
+func TestListAudit_ClampsLimitToMax(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+
+	page, err := svc.ListAudit(ctx, ticket.ID, Pagination{Limit: 5000})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page.Limit != MaxPageLimit {
+		t.Errorf("limit = %d, want %d", page.Limit, MaxPageLimit)
+	}
+}
+
+func TestListAudit_RejectsNegativeLimit(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+
+	_, err := svc.ListAudit(ctx, ticket.ID, Pagination{Limit: -1})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
+func TestListAudit_RejectsNegativeOffset(t *testing.T) {
+	svc, _ := newTestService()
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "nanor", validInput)
+
+	_, err := svc.ListAudit(ctx, ticket.ID, Pagination{Offset: -1})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
+func TestListAudit_404sOnUnknownTicket(t *testing.T) {
+	svc, _ := newTestService()
+	_, err := svc.ListAudit(context.Background(), "tkt_missing", Pagination{})
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected NotFoundError, got %v", err)
 	}
 }
 
