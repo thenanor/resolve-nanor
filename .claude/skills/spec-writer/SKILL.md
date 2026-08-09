@@ -58,3 +58,19 @@ Now attach the draft as a hostile implementer who will follow it exactly as writ
 4. Unstated assumptions - about data, permissions, existing behavior
 5. Conflicts - with CLAUDE.md, with existing endpoints, or internal
 6. Untestable criteria
+
+Rank by blast radius, then output:
+
+```
+BLOCKING DECISIONS (human must decide before imaplementation)
+1. [question] - [why blocking] - [2-3 realistic options]
+
+SAFE TO DECIDE DURING IMPLEMENTATION
+- [question] - [reasonable default and why]
+
+SUGGESTED ADDITIONS
+- [AC or invariant, written in the spec's format]
+```
+
+Apply the additions the user approves, then stop. Implementation is a separate request.
+
