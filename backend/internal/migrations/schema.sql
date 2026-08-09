@@ -32,3 +32,14 @@ CREATE TABLE IF NOT EXISTS audit_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_entries_ticket_id ON audit_entries(ticket_id);
+
+CREATE TABLE IF NOT EXISTS canned_responses (
+    id         VARCHAR PRIMARY KEY,
+    title      VARCHAR NOT NULL,
+    body       TEXT NOT NULL,
+    tags       TEXT[] NOT NULL DEFAULT '{}',
+    created_at VARCHAR NOT NULL,
+    updated_at VARCHAR NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_canned_responses_tags ON canned_responses USING GIN(tags);

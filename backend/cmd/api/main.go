@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"resolve/internal/audit"
+	"resolve/internal/cannedresponses"
 	"resolve/internal/config"
 	"resolve/internal/docs"
 	"resolve/internal/health"
@@ -41,6 +42,9 @@ func main() {
 	ticketsRepo := tickets.NewPostgresRepository(pool)
 	ticketsService := tickets.NewService(ticketsRepo, ticketsAuditAdapter{auditService})
 
+	cannedResponsesRepo := cannedresponses.NewPostgresRepository(pool)
+	cannedResponsesService := cannedresponses.NewService(cannedResponsesRepo)
+
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -48,6 +52,7 @@ func main() {
 	tickets.NewHandler(ticketsService).Mount(r)
 	audit.NewHandler(auditService).Mount(r)
 	stats.NewHandler(ticketsService).Mount(r)
+	cannedresponses.NewHandler(cannedResponsesService).Mount(r)
 	health.NewHandler(cfg.Version).Mount(r)
 	docs.NewHandler().Mount(r)
 

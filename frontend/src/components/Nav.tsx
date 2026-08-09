@@ -39,6 +39,9 @@ export function Nav() {
       <NavLink to="/stats" style={linkStyle}>
         Stats
       </NavLink>
+      <NavLink to="/canned-responses" style={linkStyle}>
+        Canned Responses
+      </NavLink>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
         <label htmlFor="actor" style={{ fontSize: 15, color: '#6b7280' }}>
           Acting as

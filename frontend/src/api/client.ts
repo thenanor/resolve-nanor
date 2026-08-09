@@ -1,4 +1,4 @@
-import type { ApiError, AuditEntry, Stats, Ticket, TicketComment } from '../types'
+import type { ApiError, AuditEntry, CannedResponse, Stats, Ticket, TicketComment } from '../types'
 
 const ACTOR_KEY = 'resolve.actor'
 
@@ -62,6 +62,12 @@ interface TicketPage {
   hasMore: boolean
 }
 
+export interface SaveCannedResponseInput {
+  title: string
+  body: string
+  tags: string[]
+}
+
 export const api = {
   // GET /tickets now returns a page envelope (tickets + limit/offset/hasMore)
   // rather than a bare array, so offset pagination can later grow a cursor
@@ -98,6 +104,18 @@ export const api = {
     request<AuditEntry[]>(`/audit${ticketId ? `?ticketId=${ticketId}` : ''}`),
 
   getStats: () => request<Stats>('/stats'),
+
+  listCannedResponses: (tag?: string) =>
+    request<CannedResponse[]>(`/canned-responses${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`),
+
+  createCannedResponse: (input: SaveCannedResponseInput) =>
+    request<CannedResponse>('/canned-responses', { method: 'POST', body: JSON.stringify(input) }),
+
+  updateCannedResponse: (id: string, input: SaveCannedResponseInput) =>
+    request<CannedResponse>(`/canned-responses/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+
+  deleteCannedResponse: (id: string) =>
+    request<void>(`/canned-responses/${id}`, { method: 'DELETE' }),
 }
 
 export { ApiRequestError }

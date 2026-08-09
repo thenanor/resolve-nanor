@@ -5,6 +5,7 @@ import { TicketCreatePage } from './pages/TicketCreatePage'
 import { TicketDetailPage } from './pages/TicketDetailPage'
 import { AuditLogPage } from './pages/AuditLogPage'
 import { StatsPage } from './pages/StatsPage'
+import { CannedResponsesPage } from './pages/CannedResponsesPage'
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
         <Route path="/tickets/:id" element={<TicketDetailPage />} />
         <Route path="/audit" element={<AuditLogPage />} />
         <Route path="/stats" element={<StatsPage />} />
+        <Route path="/canned-responses" element={<CannedResponsesPage />} />
       </Routes>
     </BrowserRouter>
   )
