@@ -37,7 +37,11 @@ the end — describe it, don't implement it.
 
 - Grep the test suite for each `AC-<n>` (this repo's convention, per the spec-writer skill and
   `pr-desc`, is that tests name the AC id they cover — check subtests/`t.Run` names, `describe`/
-  `it` blocks, and comments).
+  `it` blocks, and comments). Go identifiers can't contain hyphens, so backend test function
+  names use `TestAC<n>_...` (no hyphen, e.g. `TestAC19_...`) instead of `AC-<n>` — grep for both
+  `AC-<n>` and `AC<n>`, and also check for a grouping comment like
+  `// --- Create (AC-1..AC-7) ---`, before concluding a Go test doesn't cover an id. Frontend
+  tests use the hyphenated `AC-<n>` form directly (e.g. `describe('AC-20: ...')`).
 - For each AC, classify:
   - **Tested** — a test explicitly names the id, or its assertions unambiguously exercise
     exactly what the AC describes.

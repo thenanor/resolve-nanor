@@ -38,7 +38,11 @@ Work through this in order — each stage feeds the next, don't skip to the outp
 For each `AC-<n>` in the matched spec:
 
 - Grep the diff and changed test files for the id (this repo's specs require tests to name
-  their AC id — see each spec's "Definition of done").
+  their AC id — see each spec's "Definition of done"). Go identifiers can't contain hyphens, so
+  backend tests name it as `TestAC<n>_...` (e.g. `TestAC19_...`) rather than `AC-<n>` — grep for
+  both `AC-<n>` and `AC<n>` (or a comment block like `// --- ... (AC-1..AC-7) ---`) before
+  concluding a Go test doesn't cover an id. Frontend tests use the hyphenated `AC-<n>` form
+  directly (e.g. `describe('AC-20: ...')`).
 - Classify each one:
   - **Covered** — a test explicitly names the id.
   - **Likely covered, unverified** — code changed in a way that plausibly satisfies the AC, but
