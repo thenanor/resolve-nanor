@@ -47,3 +47,12 @@ export interface Stats {
 export interface ApiError {
   message: string
 }
+
+export interface CannedResponse {
+  id: string
+  title: string
+  body: string
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+}

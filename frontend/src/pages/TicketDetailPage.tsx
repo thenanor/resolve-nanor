@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { PriorityBadge, StatusBadge } from '../components/Badge'
+import { CannedResponsePicker } from '../components/CannedResponsePicker'
 import { ALLOWED_TRANSITIONS } from '../lib/transitions'
-import type { Ticket } from '../types'
+import type { CannedResponse, Ticket } from '../types'
 
 export function TicketDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -16,6 +17,7 @@ export function TicketDetailPage() {
   const [commentInternal, setCommentInternal] = useState(false)
   const [submittingComment, setSubmittingComment] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
+  const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([])
 
   const load = useCallback(() => {
     if (!id) return
@@ -31,6 +33,10 @@ export function TicketDetailPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    api.listCannedResponses().then(setCannedResponses).catch(() => setCannedResponses([]))
+  }, [])
 
   async function onChangeStatus(to: string) {
     if (!id) return
@@ -120,6 +126,9 @@ export function TicketDetailPage() {
 
       <form onSubmit={onAddComment} style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <h3 style={{ fontSize: 16, marginBottom: 0 }}>Add comment</h3>
+        {cannedResponses.length > 0 && (
+          <CannedResponsePicker cannedResponses={cannedResponses} onInsert={setCommentBody} />
+        )}
         <input
           placeholder="Your name"
           value={commentAuthor}

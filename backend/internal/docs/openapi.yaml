@@ -12,6 +12,7 @@ tags:
   - name: tickets
   - name: audit
   - name: stats
+  - name: canned-responses
   - name: health
 
 paths:
@@ -196,6 +197,92 @@ paths:
               schema:
                 $ref: "#/components/schemas/StatsResponse"
 
+  /canned-responses:
+    post:
+      tags: [canned-responses]
+      summary: Create a canned response
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveCannedResponseRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CannedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [canned-responses]
+      summary: List canned responses, ordered by title ascending
+      parameters:
+        - $ref: "#/components/parameters/Tag"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CannedResponse"
+
+  /canned-responses/{id}:
+    get:
+      tags: [canned-responses]
+      summary: Get a canned response by id
+      parameters:
+        - $ref: "#/components/parameters/CannedResponseId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CannedResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [canned-responses]
+      summary: Update a canned response
+      parameters:
+        - $ref: "#/components/parameters/CannedResponseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveCannedResponseRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CannedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [canned-responses]
+      summary: Delete a canned response
+      description: >-
+        Does not alter any ticket comment previously created by inserting
+        this canned response's text — comments store plain text with no
+        live reference back to the canned response.
+      parameters:
+        - $ref: "#/components/parameters/CannedResponseId"
+      responses:
+        "204":
+          description: No Content
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   parameters:
     TicketId:
@@ -226,6 +313,21 @@ components:
       description: Rows to skip before collecting the page. Defaults to 0.
       schema:
         type: integer
+    CannedResponseId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    Tag:
+      name: tag
+      in: query
+      required: false
+      description: >-
+        Filter to canned responses tagged with this value. Matching is
+        case-insensitive; an empty value is treated as no filter.
+      schema:
+        type: string
 
   responses:
     BadRequest:
@@ -395,3 +497,44 @@ components:
         avgResolutionMinutes:
           type: integer
           nullable: true
+
+    SaveCannedResponseRequest:
+      type: object
+      required: [title, body]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        body:
+          type: string
+          minLength: 1
+        tags:
+          type: array
+          items:
+            type: string
+            minLength: 1
+          default: []
+          description: >-
+            Each tag is stored trimmed and lower-cased; an empty/whitespace
+            entry is rejected.
+
+    CannedResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          example: cr_a1b2c3d4
+        title:
+          type: string
+        body:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
