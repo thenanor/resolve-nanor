@@ -80,6 +80,9 @@ following the same shape — `ticket.go`/entity, `repository.go` (interface),
   from the consumer, not the provider.
 - `stats/`, `health/`, `docs/` — smaller, self-contained handlers, mounted
   the same way in `main.go`.
+- `cannedresponses/` — reusable comment text (title/body/tags) agents can
+  insert into a ticket comment; `cr_` ids. Deleting one never mutates
+  ticket comments seeded from it (see `.claude/specs/canned-responses.md`).
 - `migrations/` — `//go:embed schema.sql`, applied at startup
   (`applySchema` in `main.go`). No migration tool: this is a v0
   convenience mirroring TypeORM's `synchronize: true`.
@@ -112,7 +115,8 @@ compares three different past implementations and their trade-offs.
 calls go through `api/client.ts`, which injects `X-Actor` (from
 `localStorage`, settable via the "Acting as" field in the nav) and unwraps
 the `{message}` error envelope into `ApiRequestError`. Pages live in
-`pages/`, one per route wired in `App.tsx`.
+`pages/`, one per route wired in `App.tsx` (canned responses split a
+picker, for inserting into a comment, from a manager, for CRUD).
 
 **Pagination**: `GET /tickets` returns a page envelope
 (`{tickets, limit, offset, hasMore}`), not a bare array — `HasMore` is
@@ -138,3 +142,7 @@ response shapes.
 - `.claude/commands/feature.md` defines a `/feature` workflow
   (explore → plan → implement → test → summary) for building features
   end-to-end in this repo.
+- New bounded-concern features are specced first: `.claude/specs/*.md`
+  holds numbered acceptance criteria (see `canned-responses.md`) that
+  double as a TDD contract before implementation, cross-checked against
+  the resulting tests by `.claude/commands/coverage-gaps.md`.
