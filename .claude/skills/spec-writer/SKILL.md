@@ -5,13 +5,13 @@ description: Turn a ticket, feature request, or rough idea into an executable sp
 
 # Spec writer
 
-Convert intent into a contract an agent can execute and a test suite can prove. Two phases: draft, then interogate. **Never write implementation code in this skill.**
+Convert intent into a contract an agent can execute and a test suite can prove. Two phases: draft, then interrogate. **Never write implementation code in this skill.**
 
 ## Phase 1 - Draft
 
-Read `Claude.md` and the relevant modules first: a spec that contredicts existing conventions or duplicates an existing endpoint is worse than no spec.
+Read `CLAUDE.md` and the relevant modules first: a spec that contradicts existing conventions or duplicates an existing endpoint is worse than no spec.
 
-Write to `specs/<slug>.md`:
+Write to `.claude/specs/<slug>.md`:
 
 ```markdown
 # [ID] - [Feature]
@@ -22,8 +22,7 @@ from "helpfully" reinterpreting the feature into something else.]
 
 ## Acceptance criteria
 
-<!-- Numbered, atomic, observable at an API boundary. Each one must be
-     assertable. Write them so a test name can quote them verbatim. -->
+<!-- Numbered and atomic — see "Writing AC that agents can execute" below. -->
 
 - **AC-1** - [Given/when/then, or a plain checkable statement]
 - **AC-2** — …
@@ -59,9 +58,11 @@ from "helpfully" reinterpreting the feature into something else.]
 
 ## Definition of done
 
-- Every AC covered by at least one test whose name cites the AC id
+- Every AC covered by at least one test whose name cites the AC id,
+  e.g. `it('AC-4: rejects reopen after 7 days', ...)`
 - Invariants covered by tests
 - Full suite green
+- PR description lists the AC ids implemented
 - [Docs/README updated if the public API changed]
 ```
 
@@ -74,10 +75,6 @@ from "helpfully" reinterpreting the feature into something else.]
 | "Track who did it" | **AC-6** — every reopen writes an audit entry `ticket.reopened` with the `X-Actor` value and the previous status |
 | "Handle errors" | **AC-7** — reopening a ticket in any status other than `resolved` returns 400 listing the allowed source states |
 
-Rules: one behavior per AC · include the failure modes, not just the
-happy path · name the observable (status code, field, audit action) ·
-never name a class or method — that's implementation.
-
 Rules for acceptance criteria:
 
 - One behavior per AC: include failure modes, not just the happy path
@@ -87,7 +84,7 @@ Rules for acceptance criteria:
 
 ## Phase 2 - Interrogate
 
-Now attach the draft as a hostile implementer who will follow it exactly as written and it is not responsible for guessing wee. Find:
+Now read the draft as a hostile implementer: someone who will follow it exactly as written and is not responsible for guessing what you meant. Find:
 
 1. Ambiguities - quote the line, give both readings
 2. Missing edge cases - empty, boundary, repeated, concurrent, out-of-order, already-in-target-state
@@ -99,7 +96,7 @@ Now attach the draft as a hostile implementer who will follow it exactly as writ
 Rank by blast radius, then output:
 
 ```
-BLOCKING DECISIONS (human must decide before imaplementation)
+BLOCKING DECISIONS (human must decide before implementation)
 1. [question] - [why blocking] - [2-3 realistic options]
 
 SAFE TO DECIDE DURING IMPLEMENTATION
@@ -111,9 +108,6 @@ SUGGESTED ADDITIONS
 
 Apply the additions the user approves, then stop. Implementation is a separate request.
 
-## Traceability
-
-- Test names cite AC ids: `it('AC-4: rejects reopen after 7 days', ...)`
-- PR description lists the AC ids it implements
-- Coverage of requirements becomes a grep, not a meeting
+Cite AC ids consistently in test names and PR descriptions (see Definition
+of done above) so coverage of requirements becomes a grep, not a meeting.
 
