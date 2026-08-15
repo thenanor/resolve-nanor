@@ -9,6 +9,15 @@
             "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-audit.js\""
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-tests.js\""
+          }
+        ]
       }
     ]
   }
