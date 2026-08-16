@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -208,5 +209,132 @@ func TestListAudit_HTTP_404sOnUnknownTicket(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestApplyTriage_HTTP_HighConfidenceReturns200WithAppliedFields(t *testing.T) {
+	h := newTestHandler(t, 1)
+	_ = h // reassigned below once the seeded ticket's repo/service are in scope
+	repo := newFakeRepository()
+	svc := NewService(repo, &fakeAudit{})
+	tks := seedTickets(t, svc, repo, 1, nil)
+	h = NewHandler(svc)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	body := `{"category":"billing","priority":"urgent","confidence":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/tickets/"+tks[0].ID+"/triage", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got Ticket
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Category == nil || *got.Category != CategoryBilling {
+		t.Errorf("Category = %v, want %q", got.Category, CategoryBilling)
+	}
+	if got.Priority != PriorityUrgent {
+		t.Errorf("Priority = %q, want %q", got.Priority, PriorityUrgent)
+	}
+}
+
+func TestApplyTriage_HTTP_InvalidCategoryReturns400(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, &fakeAudit{})
+	tks := seedTickets(t, svc, repo, 1, nil)
+	h := NewHandler(svc)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	body := `{"category":"not_a_category","priority":"urgent","confidence":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/tickets/"+tks[0].ID+"/triage", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestApplyTriage_HTTP_404sOnUnknownTicket(t *testing.T) {
+	h := newTestHandler(t, 0)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	body := `{"category":"billing","priority":"urgent","confidence":"high"}`
+	req := httptest.NewRequest(http.MethodPost, "/tickets/tkt_missing/triage", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestReviewTriage_HTTP_AcceptReturns200WithPromotedFields(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, &fakeAudit{})
+	tks := seedTickets(t, svc, repo, 1, nil)
+	if _, err := svc.ApplyTriage(context.Background(), "triage-service", tks[0].ID, "how_to", "urgent", "low"); err != nil {
+		t.Fatalf("ApplyTriage returned error: %v", err)
+	}
+	h := NewHandler(svc)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	req := httptest.NewRequest(http.MethodPost, "/tickets/"+tks[0].ID+"/triage/review", strings.NewReader(`{"decision":"accept"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got Ticket
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Category == nil || *got.Category != CategoryHowTo {
+		t.Errorf("Category = %v, want %q", got.Category, CategoryHowTo)
+	}
+	if got.PendingCategory != nil {
+		t.Errorf("PendingCategory = %v, want nil", got.PendingCategory)
+	}
+}
+
+func TestReviewTriage_HTTP_InvalidDecisionReturns400(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, &fakeAudit{})
+	tks := seedTickets(t, svc, repo, 1, nil)
+	h := NewHandler(svc)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	req := httptest.NewRequest(http.MethodPost, "/tickets/"+tks[0].ID+"/triage/review", strings.NewReader(`{"decision":"maybe"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReviewTriage_HTTP_NoPendingSuggestionReturns400(t *testing.T) {
+	repo := newFakeRepository()
+	svc := NewService(repo, &fakeAudit{})
+	tks := seedTickets(t, svc, repo, 1, nil)
+	h := NewHandler(svc)
+
+	r := chi.NewRouter()
+	h.Mount(r)
+	req := httptest.NewRequest(http.MethodPost, "/tickets/"+tks[0].ID+"/triage/review", strings.NewReader(`{"decision":"accept"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }

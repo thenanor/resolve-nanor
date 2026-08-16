@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import { PriorityBadge, StatusBadge } from '../components/Badge'
+import { CategoryBadge, NeedsReviewBadge, PriorityBadge, StatusBadge } from '../components/Badge'
 import type { Ticket, TicketPriority, TicketStatus } from '../types'
 
 const STATUSES: TicketStatus[] = ['new', 'open', 'in_progress', 'waiting_customer', 'resolved', 'closed']
@@ -62,6 +62,7 @@ export function TicketListPage() {
               <th style={th}>Customer</th>
               <th style={th}>Status</th>
               <th style={th}>Priority</th>
+              <th style={th}>Category</th>
               <th style={th}>Created</th>
             </tr>
           </thead>
@@ -77,6 +78,10 @@ export function TicketListPage() {
                 </td>
                 <td style={td}>
                   <PriorityBadge priority={t.priority} />
+                </td>
+                <td style={td}>
+                  {t.category && <CategoryBadge category={t.category} />}
+                  {t.pendingCategory && <NeedsReviewBadge />}
                 </td>
                 <td style={td}>{new Date(t.createdAt).toLocaleString()}</td>
               </tr>

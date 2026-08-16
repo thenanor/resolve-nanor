@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up down down-v ps logs db backend frontend install test test-backend test-frontend typecheck-frontend build-backend build-frontend all vet fmt lint lint-backend lint-frontend ci
+.PHONY: help up down down-v ps logs db backend triage frontend install test test-backend test-frontend typecheck-frontend build-backend build-triage build-frontend all vet fmt lint lint-backend lint-frontend ci
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,9 @@ logs: ## Follow logs from the Docker stack
 
 backend: ## Run the Go API locally against `make db` (listens on :3000)
 	cd backend && go run ./cmd/api
+
+triage: ## Run the triage service locally (requires ANTHROPIC_API_KEY; listens on :3001)
+	cd backend && go run ./cmd/triage
 
 install: ## Install frontend dependencies
 	cd frontend && npm install
@@ -65,10 +68,13 @@ typecheck-frontend: ## Typecheck the frontend
 
 ## --- Build ---
 
-all: build-backend build-frontend ## Build both the backend binary and the frontend production bundle
+all: build-backend build-triage build-frontend ## Build the backend binary, the triage binary, and the frontend production bundle
 
 build-backend: ## Compile the Go API to backend/api
 	cd backend && go build -o api ./cmd/api
+
+build-triage: ## Compile the triage service to backend/triage
+	cd backend && go build -o triage ./cmd/triage
 
 build-frontend: ## Production build the frontend (frontend/dist)
 	cd frontend && npm run build

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRepository is an in-memory Repository used to unit test TicketsService
@@ -35,6 +36,58 @@ func (f *fakeRepository) UpdateTicket(_ context.Context, t *Ticket) error {
 	cp := *t
 	cp.Comments = comments
 	f.byID[t.ID] = &cp
+	return nil
+}
+
+func (f *fakeRepository) SetTriage(_ context.Context, id string, category Category, priority Priority, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	cat := category
+	t.Category = &cat
+	t.Priority = priority
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeRepository) SetPendingTriage(_ context.Context, id string, category Category, priority Priority, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	cat, pri := category, priority
+	t.PendingCategory = &cat
+	t.PendingPriority = &pri
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeRepository) AcceptPendingTriage(_ context.Context, id string, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	t.Category = t.PendingCategory
+	if t.PendingPriority != nil {
+		t.Priority = *t.PendingPriority
+	}
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeRepository) RejectPendingTriage(_ context.Context, id string, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	t.UpdatedAt = updatedAt
 	return nil
 }
 
@@ -155,6 +208,313 @@ func newTestService() (*Service, *fakeAudit) {
 	audit := &fakeAudit{}
 	svc := NewService(newFakeRepository(), audit)
 	return svc, audit
+}
+
+// triageCall captures one NotifyTicketCreated invocation, for tests that
+// assert on the goroutine dispatched by Create.
+type triageCall struct {
+	ticketID, subject, description string
+}
+
+// channelTriageNotifier is a TriageNotifier used to assert, without
+// time.Sleep-based flakiness, that Create's triage notification runs in its
+// own goroutine: block (if non-nil) lets a test hold the call open to prove
+// Create doesn't wait for it, and calls reports what was received.
+type channelTriageNotifier struct {
+	calls chan triageCall
+	block chan struct{}
+}
+
+func newChannelTriageNotifier() *channelTriageNotifier {
+	return &channelTriageNotifier{calls: make(chan triageCall, 1)}
+}
+
+func (f *channelTriageNotifier) NotifyTicketCreated(_ context.Context, ticketID, subject, description string) error {
+	if f.block != nil {
+		<-f.block
+	}
+	f.calls <- triageCall{ticketID: ticketID, subject: subject, description: description}
+	return nil
+}
+
+func newTestServiceWithTriage(triage TriageNotifier) (*Service, *fakeAudit) {
+	audit := &fakeAudit{}
+	svc := NewService(newFakeRepository(), audit, triage)
+	return svc, audit
+}
+
+func TestCreate_DoesNotBlockOnTriageNotification(t *testing.T) {
+	notifier := &channelTriageNotifier{calls: make(chan triageCall, 1), block: make(chan struct{})}
+	svc, _ := newTestServiceWithTriage(notifier)
+
+	done := make(chan struct{})
+	go func() {
+		if _, err := svc.Create(context.Background(), "test", validInput); err != nil {
+			t.Errorf("Create returned error: %v", err)
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Create did not return promptly; it appears to be waiting on the triage notification")
+	}
+}
+
+func TestCreate_DispatchesTriageNotificationWithTicketFields(t *testing.T) {
+	notifier := newChannelTriageNotifier()
+	svc, _ := newTestServiceWithTriage(notifier)
+
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	select {
+	case call := <-notifier.calls:
+		if call.ticketID != ticket.ID {
+			t.Errorf("ticketID = %q, want %q", call.ticketID, ticket.ID)
+		}
+		if call.subject != validInput.Subject {
+			t.Errorf("subject = %q, want %q", call.subject, validInput.Subject)
+		}
+		if call.description != validInput.Description {
+			t.Errorf("description = %q, want %q", call.description, validInput.Description)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("NotifyTicketCreated was never called")
+	}
+}
+
+func TestApplyTriage_HighConfidenceAppliesDirectly(t *testing.T) {
+	svc, audit := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	got, err := svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "billing", "urgent", "high")
+	if err != nil {
+		t.Fatalf("ApplyTriage returned error: %v", err)
+	}
+	if got.Category == nil || *got.Category != CategoryBilling {
+		t.Errorf("Category = %v, want %q", got.Category, CategoryBilling)
+	}
+	if got.Priority != PriorityUrgent {
+		t.Errorf("Priority = %q, want %q", got.Priority, PriorityUrgent)
+	}
+	if got.PendingCategory != nil || got.PendingPriority != nil {
+		t.Errorf("expected no pending suggestion, got PendingCategory=%v PendingPriority=%v", got.PendingCategory, got.PendingPriority)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	found := false
+	for _, e := range entries {
+		if e.Action == "ticket.triaged" {
+			found = true
+			if e.Details["category"] != "billing" || e.Details["priority"] != "urgent" {
+				t.Errorf("audit details = %+v, want category=billing priority=urgent", e.Details)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a ticket.triaged audit entry")
+	}
+}
+
+func TestApplyTriage_MediumConfidenceAppliesDirectly(t *testing.T) {
+	svc, _ := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	got, err := svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "bug", "low", "medium")
+	if err != nil {
+		t.Fatalf("ApplyTriage returned error: %v", err)
+	}
+	if got.Category == nil || *got.Category != CategoryBug {
+		t.Errorf("Category = %v, want %q", got.Category, CategoryBug)
+	}
+	if got.Priority != PriorityLow {
+		t.Errorf("Priority = %q, want %q", got.Priority, PriorityLow)
+	}
+}
+
+func TestApplyTriage_LowConfidenceStoresPendingSuggestionOnly(t *testing.T) {
+	svc, audit := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	originalPriority := ticket.Priority
+
+	got, err := svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "how_to", "urgent", "low")
+	if err != nil {
+		t.Fatalf("ApplyTriage returned error: %v", err)
+	}
+	if got.Category != nil {
+		t.Errorf("Category = %v, want nil (low confidence must not apply directly)", got.Category)
+	}
+	if got.Priority != originalPriority {
+		t.Errorf("Priority = %q, want unchanged %q", got.Priority, originalPriority)
+	}
+	if got.PendingCategory == nil || *got.PendingCategory != CategoryHowTo {
+		t.Errorf("PendingCategory = %v, want %q", got.PendingCategory, CategoryHowTo)
+	}
+	if got.PendingPriority == nil || *got.PendingPriority != PriorityUrgent {
+		t.Errorf("PendingPriority = %v, want %q", got.PendingPriority, PriorityUrgent)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	found := false
+	for _, e := range entries {
+		if e.Action == "ticket.triage_needs_review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a ticket.triage_needs_review audit entry")
+	}
+}
+
+func TestApplyTriage_InvalidCategoryRejected(t *testing.T) {
+	svc, _ := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "not_a_category", "urgent", "high")
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected a *ValidationError, got %v", err)
+	}
+}
+
+func TestApplyTriage_InvalidPriorityRejected(t *testing.T) {
+	svc, _ := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "billing", "not_a_priority", "high")
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected a *ValidationError, got %v", err)
+	}
+}
+
+func TestApplyTriage_InvalidConfidenceRejected(t *testing.T) {
+	svc, _ := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "billing", "urgent", "not_a_confidence")
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected a *ValidationError, got %v", err)
+	}
+}
+
+func TestReviewTriage_AcceptPromotesPendingSuggestion(t *testing.T) {
+	svc, audit := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "how_to", "urgent", "low"); err != nil {
+		t.Fatalf("ApplyTriage returned error: %v", err)
+	}
+
+	got, err := svc.ReviewTriage(context.Background(), "test", ticket.ID, true)
+	if err != nil {
+		t.Fatalf("ReviewTriage returned error: %v", err)
+	}
+	if got.Category == nil || *got.Category != CategoryHowTo {
+		t.Errorf("Category = %v, want %q", got.Category, CategoryHowTo)
+	}
+	if got.Priority != PriorityUrgent {
+		t.Errorf("Priority = %q, want %q", got.Priority, PriorityUrgent)
+	}
+	if got.PendingCategory != nil || got.PendingPriority != nil {
+		t.Errorf("expected pending fields cleared, got PendingCategory=%v PendingPriority=%v", got.PendingCategory, got.PendingPriority)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	found := false
+	for _, e := range entries {
+		if e.Action == "ticket.triage_reviewed" && e.Details["decision"] == "accept" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a ticket.triage_reviewed audit entry with decision=accept")
+	}
+}
+
+func TestReviewTriage_RejectDiscardsPendingSuggestion(t *testing.T) {
+	svc, audit := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	originalPriority := ticket.Priority
+	if _, err := svc.ApplyTriage(context.Background(), "triage-service", ticket.ID, "how_to", "urgent", "low"); err != nil {
+		t.Fatalf("ApplyTriage returned error: %v", err)
+	}
+
+	got, err := svc.ReviewTriage(context.Background(), "test", ticket.ID, false)
+	if err != nil {
+		t.Fatalf("ReviewTriage returned error: %v", err)
+	}
+	if got.Category != nil {
+		t.Errorf("Category = %v, want nil (rejected suggestion must not apply)", got.Category)
+	}
+	if got.Priority != originalPriority {
+		t.Errorf("Priority = %q, want unchanged %q", got.Priority, originalPriority)
+	}
+	if got.PendingCategory != nil || got.PendingPriority != nil {
+		t.Errorf("expected pending fields cleared, got PendingCategory=%v PendingPriority=%v", got.PendingCategory, got.PendingPriority)
+	}
+
+	entries := audit.forTicket(ticket.ID)
+	found := false
+	for _, e := range entries {
+		if e.Action == "ticket.triage_reviewed" && e.Details["decision"] == "reject" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a ticket.triage_reviewed audit entry with decision=reject")
+	}
+}
+
+func TestReviewTriage_NoPendingSuggestionIsRejected(t *testing.T) {
+	svc, _ := newTestService()
+	ticket, err := svc.Create(context.Background(), "test", validInput)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, err = svc.ReviewTriage(context.Background(), "test", ticket.ID, true)
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected a *ValidationError, got %v", err)
+	}
+}
+
+func TestReviewTriage_UnknownTicketReturnsNotFound(t *testing.T) {
+	svc, _ := newTestService()
+	_, err := svc.ReviewTriage(context.Background(), "test", "tkt_doesnotexist", true)
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected a *NotFoundError, got %v", err)
+	}
 }
 
 var validInput = CreateInput{

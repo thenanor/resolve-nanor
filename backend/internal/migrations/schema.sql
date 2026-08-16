@@ -10,6 +10,15 @@ CREATE TABLE IF NOT EXISTS tickets (
     resolved_at    VARCHAR
 );
 
+-- Added after the initial schema; CREATE TABLE IF NOT EXISTS above is a
+-- no-op on an already-existing tickets table, so new columns need an
+-- explicit, idempotent ALTER TABLE. Nullable / no default: a ticket starts
+-- untriaged, and pending_* only populate for a low-confidence suggestion
+-- awaiting human review.
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS category VARCHAR;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pending_category VARCHAR;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pending_priority VARCHAR;
+
 CREATE TABLE IF NOT EXISTS ticket_comments (
     seq        BIGSERIAL PRIMARY KEY,
     id         VARCHAR UNIQUE NOT NULL,
