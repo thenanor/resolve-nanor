@@ -28,6 +28,8 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Post("/{id}/status", h.changeStatus)
 		r.Post("/{id}/comments", h.addComment)
 		r.Get("/{id}/audit", h.listAudit)
+		r.Post("/{id}/triage", h.applyTriage)
+		r.Post("/{id}/triage/review", h.reviewTriage)
 	})
 }
 
@@ -138,6 +140,42 @@ func (h *Handler) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, c)
+}
+
+func (h *Handler) applyTriage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Category   string `json:"category"`
+		Priority   string `json:"priority"`
+		Confidence string `json:"confidence"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	t, err := h.service.ApplyTriage(r.Context(), httpx.Actor(r), chi.URLParam(r, "id"), body.Category, body.Priority, body.Confidence)
+	if respondIfError(w, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+func (h *Handler) reviewTriage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Decision string `json:"decision"`
+	}
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Decision != "accept" && body.Decision != "reject" {
+		httpx.WriteError(w, http.StatusBadRequest, "decision must be 'accept' or 'reject'")
+		return
+	}
+	t, err := h.service.ReviewTriage(r.Context(), httpx.Actor(r), chi.URLParam(r, "id"), body.Decision == "accept")
+	if respondIfError(w, err) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
 }
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {

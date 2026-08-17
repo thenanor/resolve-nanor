@@ -11,7 +11,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resolve}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resolve}" ]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -23,15 +23,30 @@ services:
       - "${APP_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-resolve}:${POSTGRES_PASSWORD:-resolve}@db:5432/${POSTGRES_DB:-resolve}
+      TRIAGE_SERVICE_URL: http://triage:3001
     depends_on:
       db:
         condition: service_healthy
+
+  # Stateless: no dependency on db, and app deliberately does not depend on
+  # triage either — ticket creation must not block on triage's availability
+  # (see tickets.Service.Create's fire-and-forget notification).
+  triage:
+    build: ./backend
+    restart: unless-stopped
+    command: [ "./triage" ]
+    ports:
+      - "${TRIAGE_PORT:-3001}:3001"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      TRIAGE_PORT: 3001
+      MAIN_APP_URL: http://app:3000
 
   frontend:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-5173}:80"
+      - "${FRONTEND_PORT:-6767}:80"
     depends_on:
       - app
 

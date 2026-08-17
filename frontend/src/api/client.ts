@@ -100,6 +100,12 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
+  reviewTriage: (id: string, decision: 'accept' | 'reject') =>
+    request<Ticket>(`/tickets/${id}/triage/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    }),
+
   listAudit: (ticketId?: string) =>
     request<AuditEntry[]>(`/audit${ticketId ? `?ticketId=${ticketId}` : ''}`),
 

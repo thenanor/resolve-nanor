@@ -1,0 +1,15 @@
+# Environment
+.env
+
+# Editor
+.vscode/
+
+# Frontend (Node)
+frontend/node_modules/
+frontend/dist/
+
+# Terraform (see terraform/README.md)
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/tfplan

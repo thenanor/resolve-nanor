@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -40,7 +43,11 @@ func main() {
 	auditService := audit.NewService(auditRepo)
 
 	ticketsRepo := tickets.NewPostgresRepository(pool)
-	ticketsService := tickets.NewService(ticketsRepo, ticketsAuditAdapter{auditService})
+	ticketsService := tickets.NewService(
+		ticketsRepo,
+		ticketsAuditAdapter{auditService},
+		httpTriageNotifier{baseURL: cfg.TriageServiceURL, client: http.DefaultClient},
+	)
 
 	cannedResponsesRepo := cannedresponses.NewPostgresRepository(pool)
 	cannedResponsesService := cannedresponses.NewService(cannedResponsesRepo)
@@ -94,4 +101,40 @@ func (a ticketsAuditAdapter) List(ctx context.Context, ticketID string) ([]ticke
 		}
 	}
 	return out, nil
+}
+
+// httpTriageNotifier satisfies tickets.TriageNotifier by POSTing to the
+// separate triage service, mirroring ticketsAuditAdapter's role of bridging
+// a concrete cross-package client into a tickets-local interface.
+type httpTriageNotifier struct {
+	baseURL string
+	client  *http.Client
+}
+
+func (n httpTriageNotifier) NotifyTicketCreated(ctx context.Context, ticketID, subject, description string) error {
+	body, err := json.Marshal(map[string]string{
+		"ticketId":    ticketID,
+		"subject":     subject,
+		"description": description,
+	})
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.baseURL+"/triage", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("triage service returned status %d for ticket %s", resp.StatusCode, ticketID)
+	}
+	return nil
 }

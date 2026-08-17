@@ -41,4 +41,16 @@ type Repository interface {
 	FindByID(ctx context.Context, id string) (*Ticket, error)
 	UpdateTicket(ctx context.Context, t *Ticket) error
 	AddComment(ctx context.Context, ticketID string, c Comment) error
+
+	// SetTriage applies a triage result directly (medium/high confidence),
+	// clearing any stale pending suggestion.
+	SetTriage(ctx context.Context, id string, category Category, priority Priority, updatedAt string) error
+	// SetPendingTriage stores a low-confidence triage result as a pending
+	// suggestion without touching the ticket's actual category/priority.
+	SetPendingTriage(ctx context.Context, id string, category Category, priority Priority, updatedAt string) error
+	// AcceptPendingTriage promotes a pending suggestion to the ticket's
+	// actual category/priority and clears the pending fields.
+	AcceptPendingTriage(ctx context.Context, id string, updatedAt string) error
+	// RejectPendingTriage clears a pending suggestion without applying it.
+	RejectPendingTriage(ctx context.Context, id string, updatedAt string) error
 }

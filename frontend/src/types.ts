@@ -8,6 +8,8 @@ export type TicketStatus =
 
 export type TicketPriority = 'low' | 'normal' | 'high' | 'urgent'
 
+export type TicketCategory = 'billing' | 'bug' | 'account_access' | 'feature_request' | 'how_to' | 'other'
+
 export interface TicketComment {
   id: string
   author: string
@@ -22,11 +24,16 @@ export interface Ticket {
   description: string
   customerEmail: string
   priority: TicketPriority
+  category: TicketCategory | null
   status: TicketStatus
   comments: TicketComment[]
   createdAt: string
   updatedAt: string
   resolvedAt: string | null
+  // A low-confidence triage suggestion awaiting human review — set together
+  // or not at all. category/priority above are untouched until reviewed.
+  pendingCategory: TicketCategory | null
+  pendingPriority: TicketPriority | null
 }
 
 export interface AuditEntry {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useParams } from 'react-router-dom'
 import { api } from '../api/client'
-import { PriorityBadge, StatusBadge } from '../components/Badge'
+import { CategoryBadge, NeedsReviewBadge, PriorityBadge, StatusBadge } from '../components/Badge'
 import { CannedResponsePicker } from '../components/CannedResponsePicker'
 import { ALLOWED_TRANSITIONS } from '../lib/transitions'
 import type { CannedResponse, Ticket } from '../types'
@@ -18,6 +18,7 @@ export function TicketDetailPage() {
   const [submittingComment, setSubmittingComment] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
   const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([])
+  const [reviewBusy, setReviewBusy] = useState(false)
 
   const load = useCallback(() => {
     if (!id) return
@@ -52,6 +53,20 @@ export function TicketDetailPage() {
     }
   }
 
+  async function onReviewTriage(decision: 'accept' | 'reject') {
+    if (!id) return
+    setReviewBusy(true)
+    setError(null)
+    try {
+      const updated = await api.reviewTriage(id, decision)
+      setTicket(updated)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setReviewBusy(false)
+    }
+  }
+
   async function onAddComment(e: FormEvent) {
     e.preventDefault()
     if (!id) return
@@ -79,6 +94,8 @@ export function TicketDetailPage() {
         <h1 style={{ fontSize: 24, margin: 0 }}>{ticket.subject}</h1>
         <StatusBadge status={ticket.status} />
         <PriorityBadge priority={ticket.priority} />
+        {ticket.category && <CategoryBadge category={ticket.category} />}
+        {ticket.pendingCategory && <NeedsReviewBadge />}
       </div>
       <p style={{ color: '#6b7280', fontSize: 15 }}>
         {ticket.id} · {ticket.customerEmail} · created {new Date(ticket.createdAt).toLocaleString()}
@@ -86,6 +103,29 @@ export function TicketDetailPage() {
       <p>{ticket.description}</p>
 
       {error && <p style={{ color: '#dc2626' }}>{error}</p>}
+
+      {ticket.pendingCategory && ticket.pendingPriority && (
+        <div
+          style={{
+            margin: '16px 0',
+            padding: 12,
+            borderRadius: 8,
+            backgroundColor: '#fffbeb',
+            border: '1px solid #fde68a',
+          }}
+        >
+          <strong style={{ fontSize: 15 }}>AI suggests: </strong>
+          <CategoryBadge category={ticket.pendingCategory} /> <PriorityBadge priority={ticket.pendingPriority} />
+          <div style={{ marginTop: 8 }}>
+            <button disabled={reviewBusy} onClick={() => onReviewTriage('accept')} style={{ marginRight: 8, padding: '4px 10px' }}>
+              Accept
+            </button>
+            <button disabled={reviewBusy} onClick={() => onReviewTriage('reject')} style={{ padding: '4px 10px' }}>
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={{ margin: '16px 0' }}>
         <strong style={{ fontSize: 15, color: '#6b7280' }}>Move to:</strong>{' '}

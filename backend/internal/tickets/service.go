@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -35,6 +36,18 @@ type AuditRecorder interface {
 	List(ctx context.Context, ticketID string) ([]AuditEntry, error)
 }
 
+// TriageNotifier is the slice of the triage service's HTTP API that tickets
+// depends on. Declared here (consumer side), like AuditRecorder above, so
+// tickets does not need to import an HTTP-client package for triage.
+type TriageNotifier interface {
+	NotifyTicketCreated(ctx context.Context, ticketID, subject, description string) error
+}
+
+// triageNotifyTimeout bounds how long a fire-and-forget triage notification
+// may run. It is generous rather than tuned, since it never blocks a caller
+// — see the comment at its use site in Create.
+const triageNotifyTimeout = 20 * time.Second
+
 type CreateInput struct {
 	Subject       string
 	Description   string
@@ -49,12 +62,22 @@ type CommentInput struct {
 }
 
 type Service struct {
-	repo  Repository
-	audit AuditRecorder
+	repo   Repository
+	audit  AuditRecorder
+	triage TriageNotifier
 }
 
-func NewService(repo Repository, audit AuditRecorder) *Service {
-	return &Service{repo: repo, audit: audit}
+// NewService wires a Service together. triage is variadic (0 or 1 value)
+// rather than a required parameter so existing tests that predate the
+// triage feature keep compiling unchanged; production wiring (cmd/api)
+// always passes one explicitly. Create only dispatches a notification when
+// a TriageNotifier is actually configured.
+func NewService(repo Repository, audit AuditRecorder, triage ...TriageNotifier) *Service {
+	var t TriageNotifier
+	if len(triage) > 0 {
+		t = triage[0]
+	}
+	return &Service{repo: repo, audit: audit, triage: t}
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -101,6 +124,24 @@ func (s *Service) Create(ctx context.Context, actor string, input CreateInput) (
 	}); err != nil {
 		return nil, err
 	}
+
+	// Fire-and-forget: notify the triage service so it can classify the
+	// ticket asynchronously. This must not use the request's ctx — chi
+	// cancels it the moment this handler returns, which happens right
+	// after Create does, so a goroutine inheriting it would fail with
+	// context.Canceled on effectively every call. Arguments are passed by
+	// value rather than closing over t, since t is a pointer the caller
+	// still owns.
+	if s.triage != nil {
+		go func(ticketID, subject, description string) {
+			ctx, cancel := context.WithTimeout(context.Background(), triageNotifyTimeout)
+			defer cancel()
+			if err := s.triage.NotifyTicketCreated(ctx, ticketID, subject, description); err != nil {
+				log.Printf("triage notify failed for ticket %s: %v", ticketID, err)
+			}
+		}(t.ID, t.Subject, t.Description)
+	}
+
 	return t, nil
 }
 
@@ -137,6 +178,116 @@ func (s *Service) ChangeStatus(ctx context.Context, actor, id, to string) (*Tick
 	if err := s.audit.Record(ctx, actor, "ticket.status_changed", t.ID, map[string]any{
 		"from": string(from),
 		"to":   to,
+	}); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// ApplyTriage records a classification result from the triage service.
+// medium/high-confidence results overwrite the ticket's category/priority
+// directly; low-confidence results are stored as a pending suggestion so an
+// uncertain classification never silently overrides a ticket's priority.
+func (s *Service) ApplyTriage(ctx context.Context, actor, id, category, priority, confidence string) (*Ticket, error) {
+	t, err := s.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	cat := Category(category)
+	if !cat.Valid() {
+		names := make([]string, len(AllCategories))
+		for i, c := range AllCategories {
+			names[i] = string(c)
+		}
+		return nil, invalid("category must be one of: %s", strings.Join(names, ", "))
+	}
+	pri := Priority(priority)
+	if !pri.Valid() {
+		names := make([]string, len(AllPriorities))
+		for i, p := range AllPriorities {
+			names[i] = string(p)
+		}
+		return nil, invalid("priority must be one of: %s", strings.Join(names, ", "))
+	}
+	conf := Confidence(confidence)
+	if !conf.Valid() {
+		names := make([]string, len(AllConfidence))
+		for i, c := range AllConfidence {
+			names[i] = string(c)
+		}
+		return nil, invalid("confidence must be one of: %s", strings.Join(names, ", "))
+	}
+
+	t.UpdatedAt = now()
+
+	if conf == ConfidenceLow {
+		t.PendingCategory = &cat
+		t.PendingPriority = &pri
+		if err := s.repo.SetPendingTriage(ctx, t.ID, cat, pri, t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err := s.audit.Record(ctx, actor, "ticket.triage_needs_review", t.ID, map[string]any{
+			"category":   string(cat),
+			"priority":   string(pri),
+			"confidence": string(conf),
+		}); err != nil {
+			return nil, err
+		}
+		return t, nil
+	}
+
+	t.Category = &cat
+	t.Priority = pri
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	if err := s.repo.SetTriage(ctx, t.ID, cat, pri, t.UpdatedAt); err != nil {
+		return nil, err
+	}
+	if err := s.audit.Record(ctx, actor, "ticket.triaged", t.ID, map[string]any{
+		"category":   string(cat),
+		"priority":   string(pri),
+		"confidence": string(conf),
+	}); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// ReviewTriage records a human decision on a pending (low-confidence)
+// triage suggestion: accept promotes it to the ticket's actual
+// category/priority, reject discards it. It is an error to review a ticket
+// with no pending suggestion.
+func (s *Service) ReviewTriage(ctx context.Context, actor, id string, accept bool) (*Ticket, error) {
+	t, err := s.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if t.PendingCategory == nil {
+		return nil, invalid("ticket %s has no pending triage suggestion to review", id)
+	}
+
+	t.UpdatedAt = now()
+	decision := "reject"
+	if accept {
+		decision = "accept"
+		t.Category = t.PendingCategory
+		t.Priority = *t.PendingPriority
+	}
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+
+	if accept {
+		if err := s.repo.AcceptPendingTriage(ctx, t.ID, t.UpdatedAt); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.repo.RejectPendingTriage(ctx, t.ID, t.UpdatedAt); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.audit.Record(ctx, actor, "ticket.triage_reviewed", t.ID, map[string]any{
+		"decision": decision,
 	}); err != nil {
 		return nil, err
 	}

@@ -20,9 +20,9 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 func (r *PostgresRepository) CreateTicket(ctx context.Context, t *Ticket) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO tickets (id, subject, description, customer_email, priority, status, created_at, updated_at, resolved_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, t.ID, t.Subject, t.Description, t.CustomerEmail, string(t.Priority), string(t.Status), t.CreatedAt, t.UpdatedAt, t.ResolvedAt)
+		INSERT INTO tickets (id, subject, description, customer_email, priority, category, status, created_at, updated_at, resolved_at, pending_category, pending_priority)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, t.ID, t.Subject, t.Description, t.CustomerEmail, string(t.Priority), categoryArg(t.Category), string(t.Status), t.CreatedAt, t.UpdatedAt, t.ResolvedAt, categoryArg(t.PendingCategory), priorityArg(t.PendingPriority))
 	return err
 }
 
@@ -32,6 +32,68 @@ func (r *PostgresRepository) UpdateTicket(ctx context.Context, t *Ticket) error 
 		WHERE id = $1
 	`, t.ID, string(t.Status), t.UpdatedAt, t.ResolvedAt)
 	return err
+}
+
+// SetTriage applies a triage result directly, clearing any stale pending
+// suggestion (see the tickets.Repository doc comment for the medium/high
+// vs. low confidence split).
+func (r *PostgresRepository) SetTriage(ctx context.Context, id string, category Category, priority Priority, updatedAt string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tickets SET category = $2, priority = $3, pending_category = NULL, pending_priority = NULL, updated_at = $4
+		WHERE id = $1
+	`, id, string(category), string(priority), updatedAt)
+	return err
+}
+
+// SetPendingTriage stores a low-confidence triage result as a pending
+// suggestion without touching the ticket's actual category/priority.
+func (r *PostgresRepository) SetPendingTriage(ctx context.Context, id string, category Category, priority Priority, updatedAt string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tickets SET pending_category = $2, pending_priority = $3, updated_at = $4
+		WHERE id = $1
+	`, id, string(category), string(priority), updatedAt)
+	return err
+}
+
+// AcceptPendingTriage promotes a pending suggestion to the ticket's actual
+// category/priority and clears the pending fields, all in one statement so
+// there's no read-then-write race with a concurrent triage write.
+func (r *PostgresRepository) AcceptPendingTriage(ctx context.Context, id string, updatedAt string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tickets
+		SET category = pending_category,
+		    priority = COALESCE(pending_priority, priority),
+		    pending_category = NULL,
+		    pending_priority = NULL,
+		    updated_at = $2
+		WHERE id = $1
+	`, id, updatedAt)
+	return err
+}
+
+// RejectPendingTriage clears a pending suggestion without applying it.
+func (r *PostgresRepository) RejectPendingTriage(ctx context.Context, id string, updatedAt string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE tickets SET pending_category = NULL, pending_priority = NULL, updated_at = $2
+		WHERE id = $1
+	`, id, updatedAt)
+	return err
+}
+
+func categoryArg(c *Category) *string {
+	if c == nil {
+		return nil
+	}
+	s := string(*c)
+	return &s
+}
+
+func priorityArg(p *Priority) *string {
+	if p == nil {
+		return nil
+	}
+	s := string(*p)
+	return &s
 }
 
 func (r *PostgresRepository) AddComment(ctx context.Context, ticketID string, c Comment) error {
@@ -44,7 +106,7 @@ func (r *PostgresRepository) AddComment(ctx context.Context, ticketID string, c 
 
 func (r *PostgresRepository) FindByID(ctx context.Context, id string) (*Ticket, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, subject, description, customer_email, priority, status, created_at, updated_at, resolved_at
+		SELECT id, subject, description, customer_email, priority, category, status, created_at, updated_at, resolved_at, pending_category, pending_priority
 		FROM tickets WHERE id = $1
 	`, id)
 
@@ -99,7 +161,7 @@ func (r *PostgresRepository) FindPage(ctx context.Context, filter Filter, page P
 // rows with an identical created_at still sort consistently across pages.
 func findTicketsQuery(filter Filter) (string, []any) {
 	query := `
-		SELECT id, subject, description, customer_email, priority, status, created_at, updated_at, resolved_at
+		SELECT id, subject, description, customer_email, priority, category, status, created_at, updated_at, resolved_at, pending_category, pending_priority
 		FROM tickets
 	`
 	var conds []string
@@ -178,10 +240,15 @@ func scanTicket(row rowScanner) (*Ticket, error) {
 	return scanTicketRow(row)
 }
 
+// scanTicketRow's Scan targets must stay in the exact order of the SELECT
+// column lists in FindByID and findTicketsQuery above — this file has no
+// named-column scanning, so a reordered SELECT silently scans the wrong
+// value into the wrong field.
 func scanTicketRow(row rowScanner) (*Ticket, error) {
 	var t Ticket
 	var priority, status string
-	err := row.Scan(&t.ID, &t.Subject, &t.Description, &t.CustomerEmail, &priority, &status, &t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt)
+	var category, pendingCategory, pendingPriority *string
+	err := row.Scan(&t.ID, &t.Subject, &t.Description, &t.CustomerEmail, &priority, &category, &status, &t.CreatedAt, &t.UpdatedAt, &t.ResolvedAt, &pendingCategory, &pendingPriority)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -190,5 +257,17 @@ func scanTicketRow(row rowScanner) (*Ticket, error) {
 	}
 	t.Priority = Priority(priority)
 	t.Status = Status(status)
+	if category != nil {
+		c := Category(*category)
+		t.Category = &c
+	}
+	if pendingCategory != nil {
+		c := Category(*pendingCategory)
+		t.PendingCategory = &c
+	}
+	if pendingPriority != nil {
+		p := Priority(*pendingPriority)
+		t.PendingPriority = &p
+	}
 	return &t, nil
 }

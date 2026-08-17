@@ -42,6 +42,28 @@ gh secret set EC2_HOST --body "$(terraform output -raw public_ip)"
 gh secret set EC2_SSH_PRIVATE_KEY < ~/.ssh/resolve
 ```
 
+## App secrets (`.env`)
+
+`.github/workflows/deploy.yml` rsyncs the repo to the instance but
+deliberately **excludes `.env`** — deploy syncs code, not secrets. There is
+no GitHub Actions secret that reaches the container (`EC2_HOST` and
+`EC2_SSH_PRIVATE_KEY` are only used to SSH in and run `docker compose up`);
+`docker compose` on the host reads whatever `.env` already sits next to
+`docker-compose.yml` there, so it has to be placed manually, once, per
+instance:
+
+```bash
+scp -i ~/.ssh/resolve .env ec2-user@$(terraform output -raw public_ip):/home/ec2-user/resolve/.env
+```
+
+(Run this after the first deploy has created `/home/ec2-user/resolve/` — or `ssh`
+in and `mkdir -p` it yourself first.)
+
+This is required for `ANTHROPIC_API_KEY` (the triage service refuses to
+start without it) and any other value you don't want defaulted — see
+`.env.example` at the repo root for the full list. Re-run the `scp` after
+rotating a key or replacing the instance; deploys never touch this file.
+
 ## Tear down
 
 ```bash

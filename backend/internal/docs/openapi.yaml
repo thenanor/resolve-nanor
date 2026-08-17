@@ -121,6 +121,78 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /tickets/{id}/triage:
+    post:
+      tags: [tickets]
+      summary: Record a triage classification result
+      description: >-
+        Called by the triage service, not end users. medium/high confidence
+        results overwrite the ticket's category/priority directly; low
+        confidence results are stored as a pending suggestion (see
+        pendingCategory/pendingPriority on Ticket) for a human to review via
+        POST /tickets/{id}/triage/review instead of being applied.
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/XActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, priority, confidence]
+              properties:
+                category:
+                  $ref: "#/components/schemas/Category"
+                priority:
+                  $ref: "#/components/schemas/Priority"
+                confidence:
+                  $ref: "#/components/schemas/Confidence"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /tickets/{id}/triage/review:
+    post:
+      tags: [tickets]
+      summary: Accept or reject a pending (low-confidence) triage suggestion
+      description: >-
+        400s if the ticket has no pending suggestion — check
+        pendingCategory/pendingPriority on the Ticket before calling.
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/XActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [accept, reject]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /tickets/{id}/comments:
     post:
       tags: [tickets]
@@ -373,6 +445,19 @@ components:
       type: string
       enum: [new, open, in_progress, waiting_customer, resolved, closed]
 
+    Category:
+      type: string
+      description: Assigned by the triage service; null until triage runs.
+      enum: [billing, bug, account_access, feature_request, how_to, other]
+
+    Confidence:
+      type: string
+      description: >-
+        How confident the triage service is in a classification. medium/high
+        results apply directly; low results are stored as a pending
+        suggestion for a human to review instead.
+      enum: [low, medium, high]
+
     CreateTicketRequest:
       type: object
       required: [subject, description, customerEmail, priority]
@@ -433,6 +518,10 @@ components:
           format: email
         priority:
           $ref: "#/components/schemas/Priority"
+        category:
+          allOf:
+            - $ref: "#/components/schemas/Category"
+          nullable: true
         status:
           $ref: "#/components/schemas/Status"
         comments:
@@ -449,6 +538,16 @@ components:
           type: string
           format: date-time
           nullable: true
+        pendingCategory:
+          allOf:
+            - $ref: "#/components/schemas/Category"
+          nullable: true
+          description: A low-confidence triage suggestion awaiting human review.
+        pendingPriority:
+          allOf:
+            - $ref: "#/components/schemas/Priority"
+          nullable: true
+          description: A low-confidence triage suggestion awaiting human review.
 
     AuditEntry:
       type: object

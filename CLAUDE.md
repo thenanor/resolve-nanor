@@ -33,6 +33,7 @@ The frontend container is a production build served by nginx (proxies `/api`
 ```bash
 make db                   # just Postgres, in Docker
 make backend              # go run ./cmd/api  (listens on :3000)
+make triage                # go run ./cmd/triage  (requires ANTHROPIC_API_KEY, listens on :3001)
 make install               # npm install (frontend)
 make frontend              # npm run dev (http://localhost:5173, proxies /api -> :3000)
 ```
@@ -52,13 +53,15 @@ Run a single Vitest file: `cd frontend && npx vitest run src/lib/transitions.tes
 
 **Build:**
 ```bash
-make all                   # backend binary + frontend/dist
+make all                   # backend binary + triage binary + frontend/dist
 make build-backend         # backend/api
+make build-triage          # backend/triage
 make build-frontend        # frontend/dist
 ```
 
 Config is env-driven: `cp .env.example .env` to override ports/DB creds
-(never commit `.env`). Backend env vars: `PORT`, `DATABASE_URL`, `VERSION`
+(never commit `.env`). Backend env vars: `PORT`, `DATABASE_URL`, `VERSION`,
+`ANTHROPIC_API_KEY`, `TRIAGE_PORT`, `TRIAGE_SERVICE_URL`, `MAIN_APP_URL`
 (see `backend/internal/config/config.go`).
 
 ## Architecture

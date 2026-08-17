@@ -67,6 +67,58 @@ func (f *fakeTicketRepository) AddComment(_ context.Context, ticketID string, c 
 	return nil
 }
 
+func (f *fakeTicketRepository) SetTriage(_ context.Context, id string, category tickets.Category, priority tickets.Priority, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	cat := category
+	t.Category = &cat
+	t.Priority = priority
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeTicketRepository) SetPendingTriage(_ context.Context, id string, category tickets.Category, priority tickets.Priority, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	cat, pri := category, priority
+	t.PendingCategory = &cat
+	t.PendingPriority = &pri
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeTicketRepository) AcceptPendingTriage(_ context.Context, id string, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	t.Category = t.PendingCategory
+	if t.PendingPriority != nil {
+		t.Priority = *t.PendingPriority
+	}
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (f *fakeTicketRepository) RejectPendingTriage(_ context.Context, id string, updatedAt string) error {
+	t, ok := f.byID[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	t.PendingCategory = nil
+	t.PendingPriority = nil
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
 type fakeAuditRecorder struct{}
 
 func (fakeAuditRecorder) Record(_ context.Context, _, _, _ string, _ map[string]any) error {

@@ -1,4 +1,4 @@
-import type { TicketPriority, TicketStatus } from '../types'
+import type { TicketCategory, TicketPriority, TicketStatus } from '../types'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
   new: '#6b7280',
@@ -14,6 +14,15 @@ const PRIORITY_COLORS: Record<TicketPriority, string> = {
   normal: '#2563eb',
   high: '#d97706',
   urgent: '#dc2626',
+}
+
+const CATEGORY_COLORS: Record<TicketCategory, string> = {
+  billing: '#7c3aed',
+  bug: '#dc2626',
+  account_access: '#d97706',
+  feature_request: '#2563eb',
+  how_to: '#059669',
+  other: '#6b7280',
 }
 
 function Badge({ label, color }: { label: string; color: string }) {
@@ -41,4 +50,12 @@ export function StatusBadge({ status }: { status: TicketStatus }) {
 
 export function PriorityBadge({ priority }: { priority: TicketPriority }) {
   return <Badge label={priority} color={PRIORITY_COLORS[priority]} />
+}
+
+export function CategoryBadge({ category }: { category: TicketCategory }) {
+  return <Badge label={category.replace('_', ' ')} color={CATEGORY_COLORS[category]} />
+}
+
+export function NeedsReviewBadge() {
+  return <Badge label="needs review" color="#b45309" />
 }
