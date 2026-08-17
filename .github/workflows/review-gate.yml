@@ -83,7 +83,10 @@ jobs:
             --json-schema '{"type":"object","properties":{"high_count":{"type":"integer","description":"number of HIGH severity findings"},"verdict":{"type":"string","enum":["MERGABLE","NOT MERGABLE"]}},"required":["high_count","verdict"]}'
 
       - name: Enforce review gate
-        if: fromJSON(steps.review.outputs.structured_output).high_count > 0 || fromJSON(steps.review.outputs.structured_output).verdict != 'MERGABLE'
+        if: |
+          steps.review.outputs.structured_output != '' &&
+          (fromJSON(steps.review.outputs.structured_output).high_count > 0 ||
+           fromJSON(steps.review.outputs.structured_output).verdict != 'MERGABLE')
         run: |
           echo "Review gate failed: HIGH severity findings present, or verdict was NOT MERGABLE."
           echo 'Structured result: ${{ steps.review.outputs.structured_output }}'
