@@ -6,6 +6,7 @@ on:
 
 jobs:
   review:
+    name: Review Gate
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -21,6 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Review
+        id: review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -72,4 +74,17 @@ jobs:
             a false finding cost more than a missed one, because it
             teaches the team to ignore you.
 
-          claude_args: '--allowed-tools "Bash(make test),Bash(gh pr comment:*),Bash(gh pr view:*)"'
+            After posting the comment, also report the structured result
+            required by the JSON schema: the number of HIGH severity
+            findings, and the verdict.
+
+          claude_args: |
+            --allowed-tools "Bash(make test),Bash(gh pr comment:*),Bash(gh pr view:*)"
+            --json-schema '{"type":"object","properties":{"high_count":{"type":"integer","description":"number of HIGH severity findings"},"verdict":{"type":"string","enum":["MERGABLE","NOT MERGABLE"]}},"required":["high_count","verdict"]}'
+
+      - name: Enforce review gate
+        if: fromJSON(steps.review.outputs.structured_output).high_count > 0 || fromJSON(steps.review.outputs.structured_output).verdict != 'MERGABLE'
+        run: |
+          echo "Review gate failed: HIGH severity findings present, or verdict was NOT MERGABLE."
+          echo 'Structured result: ${{ steps.review.outputs.structured_output }}'
+          exit 1
