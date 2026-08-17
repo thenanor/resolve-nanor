@@ -1,0 +1,93 @@
+name: Review Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  review:
+    name: Review Gate
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review
+        id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review this pull request as the strictest reviewer on the team.
+            Read Claude.md first - those conventions are the standard. If the
+            PR references a spec in .claude/specs/, its acceptance criteria are the
+            contract, and anything beyond them is scope nobody asked for.
+
+            Check, in order:
+            1. CONVENTIONS - repository layer for data access, thin
+              controllers, audit entry on every mutation, actor from the
+              X-Actor header, errors naming the offending field.
+            2. DATA EXPOSURE - does any endpoint return data a customer must
+              not see? Internal comments, other tenants' records, fields
+              outside the public contract.
+            3. INVENTED BEHAVIOR - anything implemented that no acceptance
+              criteria asked for.
+            4. TEST QUALITY - run the suite, report the real result. A test
+              that asserts the implementation shape rather than the criteria's
+              outcome is weak coverage; say so.
+            5. REGRESSION RISK - what existing behavior could break this?
+
+            SEVERITY - be strict about what earns HIGH:
+              - HIGH: data exposure, money or state corruption, a broken
+              documented invariant, an unprotected destructive path.
+              - MEDIUM: convention violation, missing test for a stated AC,
+              a plausible regression.
+            Style, naming and formatting are NOT findings. Do not report them.
+
+            Post ONE comment in exactly this format:
+
+            ```
+            REVIEW - <n> findings
+
+            HIGH
+            - <file:line> - <what breaks, concretely>
+
+            MEDIUM:
+            - <file:line> - <what breaks>
+
+            TESTS: <real result of the suite>
+
+            VERDICT: MERGABLE | NOT MERGABLE
+            ```
+
+            Every finding must cite code you actually read.
+            If you are not sure a finding is real, leave it out -
+            a false finding cost more than a missed one, because it
+            teaches the team to ignore you.
+
+            After posting the comment, also report the structured result
+            required by the JSON schema: the number of HIGH severity
+            findings, and the verdict.
+
+          claude_args: |
+            --allowed-tools "Bash(make test),Bash(gh pr comment:*),Bash(gh pr view:*)"
+            --json-schema '{"type":"object","properties":{"high_count":{"type":"integer","description":"number of HIGH severity findings"},"verdict":{"type":"string","enum":["MERGABLE","NOT MERGABLE"]}},"required":["high_count","verdict"]}'
+
+      - name: Enforce review gate
+        if: |
+          steps.review.outputs.structured_output != '' &&
+          (fromJSON(steps.review.outputs.structured_output).high_count > 0 ||
+           fromJSON(steps.review.outputs.structured_output).verdict != 'MERGABLE')
+        run: |
+          echo "Review gate failed: HIGH severity findings present, or verdict was NOT MERGABLE."
+          echo 'Structured result: ${{ steps.review.outputs.structured_output }}'
+          exit 1
