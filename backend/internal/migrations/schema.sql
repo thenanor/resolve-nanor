@@ -52,3 +52,23 @@ CREATE TABLE IF NOT EXISTS canned_responses (
 );
 
 CREATE INDEX IF NOT EXISTS idx_canned_responses_tags ON canned_responses USING GIN(tags);
+
+-- A reply an agent has written but not yet sent to the customer. Reviewed
+-- by the reply-guard service before it may become a real ticket_comments
+-- row (see backend/internal/drafts). guard_result is one JSONB blob
+-- (verdict/findings/confidence/reasoning/injectionSuspected/requireHuman
+-- together) rather than normalized columns, matching audit_entries.details
+-- above — it's written and read as a single unit, never queried by its
+-- sub-fields.
+CREATE TABLE IF NOT EXISTS drafts (
+    id           VARCHAR PRIMARY KEY,
+    ticket_id    VARCHAR NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    author       VARCHAR NOT NULL,
+    body         TEXT NOT NULL,
+    status       VARCHAR NOT NULL,
+    guard_result JSONB,
+    created_at   VARCHAR NOT NULL,
+    updated_at   VARCHAR NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_drafts_ticket_id ON drafts(ticket_id);

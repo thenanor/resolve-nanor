@@ -24,6 +24,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-resolve}:${POSTGRES_PASSWORD:-resolve}@db:5432/${POSTGRES_DB:-resolve}
       TRIAGE_SERVICE_URL: http://triage:3001
+      REPLYGUARD_SERVICE_URL: http://replyguard:3002
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +41,20 @@ services:
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       TRIAGE_PORT: 3001
+      MAIN_APP_URL: http://app:3000
+
+  # Stateless, same rationale as triage above — draft creation must not
+  # block on reply-guard's availability (see
+  # drafts.Service.dispatchGuard's fire-and-forget notification).
+  replyguard:
+    build: ./backend
+    restart: unless-stopped
+    command: [ "./replyguard" ]
+    ports:
+      - "${REPLYGUARD_PORT:-3002}:3002"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      REPLYGUARD_PORT: 3002
       MAIN_APP_URL: http://app:3000
 
   frontend:

@@ -10,6 +10,7 @@ servers:
   - url: /
 tags:
   - name: tickets
+  - name: drafts
   - name: audit
   - name: stats
   - name: canned-responses
@@ -218,6 +219,150 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /tickets/{id}/drafts:
+    post:
+      tags: [drafts]
+      summary: Stage a draft reply for review
+      description: >-
+        Dispatches a fire-and-forget call to the reply-guard service and
+        returns immediately with status pending_review and a null
+        guardResult — poll GET .../drafts/{draftId} for the outcome.
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/XActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDraftRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /tickets/{id}/drafts/{draftId}:
+    get:
+      tags: [drafts]
+      summary: Get a draft by id
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/DraftId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [drafts]
+      summary: Edit a draft's body and resubmit it for review
+      description: >-
+        Only allowed when the draft's guardResult.verdict is revise or
+        escalate, or the guard call itself failed (status guard_failed).
+        Resets status to pending_review, clears guardResult, and
+        re-dispatches the guard call.
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/DraftId"
+        - $ref: "#/components/parameters/XActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /tickets/{id}/drafts/{draftId}/send:
+    post:
+      tags: [drafts]
+      summary: Send a draft as a real, customer-visible comment
+      description: >-
+        Requires status guarded. A send verdict sends unconditionally. A
+        revise verdict requires a non-empty overrideReason to send anyway
+        (logged to the audit trail). An escalate verdict can never be sent,
+        override or not — the only way forward is editing the draft
+        (PUT .../drafts/{draftId}), which re-triggers review.
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/DraftId"
+        - $ref: "#/components/parameters/XActor"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overrideReason:
+                  type: string
+                  description: Required to send a draft with a revise verdict.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /tickets/{id}/drafts/{draftId}/guard-result:
+    post:
+      tags: [drafts]
+      summary: Record a reply-guard assessment
+      description: Called by the reply-guard service, not end users.
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/DraftId"
+        - $ref: "#/components/parameters/XActor"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuardResult"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /tickets/{id}/audit:
     get:
       tags: [tickets, audit]
@@ -391,6 +536,12 @@ components:
       required: true
       schema:
         type: string
+    DraftId:
+      name: draftId
+      in: path
+      required: true
+      schema:
+        type: string
     Tag:
       name: tag
       in: query
@@ -410,6 +561,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: Ticket not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The draft's current state doesn't allow this operation
       content:
         application/json:
           schema:
@@ -548,6 +705,95 @@ components:
             - $ref: "#/components/schemas/Priority"
           nullable: true
           description: A low-confidence triage suggestion awaiting human review.
+
+    Verdict:
+      type: string
+      description: reply-guard's recommendation for a draft.
+      enum: [send, revise, escalate]
+
+    Policy:
+      type: string
+      description: Which reply-policy line a Finding is about.
+      enum: [disclosure, commitment, answer, tone]
+
+    Severity:
+      type: string
+      description: >-
+        How bad one Finding is, independent of which Policy line it's
+        under.
+      enum: [low, medium, high]
+
+    Finding:
+      type: object
+      properties:
+        policy:
+          $ref: "#/components/schemas/Policy"
+        severity:
+          $ref: "#/components/schemas/Severity"
+        issue:
+          type: string
+        quote:
+          type: string
+          description: >-
+            A literal, contiguous substring of the draft body that
+            triggered this finding — never a paraphrase.
+
+    GuardResult:
+      type: object
+      properties:
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        confidence:
+          $ref: "#/components/schemas/Confidence"
+        reasoning:
+          type: string
+        injectionSuspected:
+          type: boolean
+        requireHuman:
+          type: boolean
+          description: >-
+            True when a second human (not just the drafting agent) should
+            review before sending.
+
+    Draft:
+      type: object
+      properties:
+        id:
+          type: string
+        ticketId:
+          type: string
+        author:
+          type: string
+        body:
+          type: string
+        status:
+          type: string
+          enum: [pending_review, guarded, guard_failed, sent]
+        guardResult:
+          allOf:
+            - $ref: "#/components/schemas/GuardResult"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateDraftRequest:
+      type: object
+      required: [author, body]
+      properties:
+        author:
+          type: string
+          minLength: 1
+        body:
+          type: string
+          minLength: 1
 
     AuditEntry:
       type: object
