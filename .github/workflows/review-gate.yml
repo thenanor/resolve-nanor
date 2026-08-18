@@ -41,9 +41,13 @@ jobs:
               outside the public contract.
             3. INVENTED BEHAVIOR - anything implemented that no acceptance
               criteria asked for.
-            4. TEST QUALITY - run the suite, report the real result. A test
-              that asserts the implementation shape rather than the criteria's
-              outcome is weak coverage; say so.
+            4. TEST QUALITY - run `make test` (the only test command
+              permitted in this sandbox; it runs both the backend and
+              frontend suites - do not attempt `go build`, `go test`, or
+              `npm test` directly, they are not in the allowed tools list
+              and will fail) and report the real result. A test that asserts
+              the implementation shape rather than the criteria's outcome is
+              weak coverage; say so.
             5. REGRESSION RISK - what existing behavior could break this?
 
             SEVERITY - be strict about what earns HIGH:
