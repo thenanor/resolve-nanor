@@ -244,6 +244,8 @@ func (s *Service) Send(ctx context.Context, actor, ticketID, draftID, overrideRe
 			return nil, conflict("draft %s has a revise verdict; sending requires overrideReason", d.ID)
 		}
 		overridden = true
+	default:
+		return nil, conflict("draft %s has an unrecognized guard verdict %q and cannot be sent", d.ID, d.GuardResult.Verdict)
 	}
 
 	if err := s.commenter.AddReply(ctx, actor, d.TicketID, d.Author, d.Body); err != nil {

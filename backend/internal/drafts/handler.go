@@ -2,6 +2,7 @@ package drafts
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -108,20 +109,41 @@ func (h *Handler) recordGuardResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verdict := Verdict(body.Verdict)
+	if !verdict.Valid() {
+		httpx.WriteError(w, http.StatusBadRequest, fmt.Sprintf("verdict must be one of %v, got %q", AllVerdicts, body.Verdict))
+		return
+	}
+	confidence := tickets.Confidence(body.Confidence)
+	if !confidence.Valid() {
+		httpx.WriteError(w, http.StatusBadRequest, fmt.Sprintf("confidence must be one of %v, got %q", tickets.AllConfidence, body.Confidence))
+		return
+	}
+
 	findings := make([]Finding, len(body.Findings))
 	for i, f := range body.Findings {
+		policy := Policy(f.Policy)
+		if !policy.Valid() {
+			httpx.WriteError(w, http.StatusBadRequest, fmt.Sprintf("findings[%d].policy must be one of %v, got %q", i, AllPolicies, f.Policy))
+			return
+		}
+		severity := Severity(f.Severity)
+		if !severity.Valid() {
+			httpx.WriteError(w, http.StatusBadRequest, fmt.Sprintf("findings[%d].severity must be one of %v, got %q", i, AllSeverities, f.Severity))
+			return
+		}
 		findings[i] = Finding{
-			Policy:   Policy(f.Policy),
-			Severity: Severity(f.Severity),
+			Policy:   policy,
+			Severity: severity,
 			Issue:    f.Issue,
 			Quote:    f.Quote,
 		}
 	}
 
 	d, err := h.service.RecordGuardResult(r.Context(), httpx.Actor(r), chi.URLParam(r, "id"), chi.URLParam(r, "draftId"), GuardResult{
-		Verdict:            Verdict(body.Verdict),
+		Verdict:            verdict,
 		Findings:           findings,
-		Confidence:         tickets.Confidence(body.Confidence),
+		Confidence:         confidence,
 		Reasoning:          body.Reasoning,
 		InjectionSuspected: body.InjectionSuspected,
 		RequireHuman:       body.RequireHuman,
