@@ -2,6 +2,7 @@ package replyguard
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,31 +11,34 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func newTestHandler(classifier Classifier, updater DraftUpdater) *Handler {
-	return NewHandler(NewService(classifier, updater))
+func newTestHandler(classifier Classifier) *Handler {
+	return NewHandler(NewService(classifier))
 }
 
-func TestHandler_Create_ValidBodyTriggersGuardAndWritesBack(t *testing.T) {
-	updater := &fakeDraftUpdater{}
-	h := newTestHandler(fakeClassifier{result: Result{Confidence: 0.9}}, updater)
+func TestHandler_Create_ValidBodyReturnsGuardResult(t *testing.T) {
+	h := newTestHandler(fakeClassifier{result: Result{Confidence: 0.9}})
 	r := chi.NewRouter()
 	h.Mount(r)
 
-	body := `{"ticketId":"tkt_1","draftId":"dft_1","ticketSubject":"s","ticketDescription":"d","ticketStatus":"open","ticketPriority":"high","internalNotes":[{"author":"bob","body":"secret"}],"draftBody":"hello"}`
+	body := `{"ticketSubject":"s","ticketDescription":"d","ticketStatus":"open","ticketPriority":"high","internalNotes":[{"author":"bob","body":"secret"}],"body":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/guard", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if len(updater.calls) != 1 || updater.calls[0].ticketID != "tkt_1" || updater.calls[0].draftID != "dft_1" {
-		t.Errorf("updater calls = %+v, want one call for tkt_1/dft_1", updater.calls)
+	var got GuardResult
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Verdict != VerdictSend {
+		t.Errorf("Verdict = %q, want %q", got.Verdict, VerdictSend)
 	}
 }
 
 func TestHandler_Create_InvalidJSONBodyReturns400(t *testing.T) {
-	h := newTestHandler(fakeClassifier{}, &fakeDraftUpdater{})
+	h := newTestHandler(fakeClassifier{})
 	r := chi.NewRouter()
 	h.Mount(r)
 
@@ -48,11 +52,11 @@ func TestHandler_Create_InvalidJSONBodyReturns400(t *testing.T) {
 }
 
 func TestHandler_Create_ClassifierErrorReturns500(t *testing.T) {
-	h := newTestHandler(fakeClassifier{err: errClassifyFailed}, &fakeDraftUpdater{})
+	h := newTestHandler(fakeClassifier{err: errClassifyFailed})
 	r := chi.NewRouter()
 	h.Mount(r)
 
-	body := `{"ticketId":"tkt_1","draftId":"dft_1"}`
+	body := `{"body":"hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/guard", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)

@@ -18,14 +18,15 @@ type Config struct {
 	// (fire-and-forget POST /triage from tickets.Service.Create).
 	TriageServiceURL string
 	// MainAppURL is where cmd/triage reaches the main app to write a
-	// classification result back (POST /tickets/{id}/triage). Reused by
-	// cmd/replyguard to write a guard result back
-	// (POST /tickets/{id}/drafts/{draftId}/guard-result).
+	// classification result back (POST /tickets/{id}/triage).
 	MainAppURL string
 	// ReplyGuardPort is the port cmd/replyguard listens on.
 	ReplyGuardPort string
 	// ReplyGuardServiceURL is where cmd/api reaches the reply-guard
-	// service (fire-and-forget POST /guard from drafts.Service.dispatchGuard).
+	// service: a synchronous POST /guard call from
+	// tickets.Service.AddComment's reply-guard gate (see the
+	// httpReplyGuardClient adapter in cmd/api/main.go), which blocks
+	// comment creation on the response.
 	ReplyGuardServiceURL string
 }
 

@@ -8,8 +8,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
-
-	"resolve/internal/drafts"
 )
 
 const toolName = "guard_reply"
@@ -49,7 +47,7 @@ func (c *anthropicClassifier) Guard(ctx context.Context, input GuardInput) (Resu
 	if err != nil {
 		return Result{}, fmt.Errorf("anthropic guard: %w", err)
 	}
-	return parseResult(msg, input.DraftBody)
+	return parseResult(msg, input.Body)
 }
 
 func enumStrings[T ~string](values []T) []string {
@@ -61,8 +59,8 @@ func enumStrings[T ~string](values []T) []string {
 }
 
 func buildRequest(input GuardInput) anthropic.MessageNewParams {
-	policyEnum := enumStrings(drafts.AllPolicies)
-	severityEnum := enumStrings(drafts.AllSeverities)
+	policyEnum := enumStrings(AllPolicies)
+	severityEnum := enumStrings(AllSeverities)
 
 	notes := "(none)"
 	if len(input.InternalNotes) > 0 {
@@ -75,7 +73,7 @@ func buildRequest(input GuardInput) anthropic.MessageNewParams {
 
 	userMessage := fmt.Sprintf(
 		"Ticket subject: %s\nDescription: %s\nStatus: %s\nPriority: %s\n\nInternal notes:\n%s\nDraft reply:\n%s",
-		input.TicketSubject, input.TicketDescription, input.TicketStatus, input.TicketPriority, notes, input.DraftBody,
+		input.TicketSubject, input.TicketDescription, input.TicketStatus, input.TicketPriority, notes, input.Body,
 	)
 
 	return anthropic.MessageNewParams{
@@ -166,13 +164,13 @@ func parseResult(msg *anthropic.Message, draftBody string) (Result, error) {
 			return Result{}, fmt.Errorf("model returned out-of-range confidence %v", input.Confidence)
 		}
 
-		findings := make([]drafts.Finding, len(input.Findings))
+		findings := make([]Finding, len(input.Findings))
 		for i, f := range input.Findings {
-			policy := drafts.Policy(f.Policy)
+			policy := Policy(f.Policy)
 			if !policy.Valid() {
 				return Result{}, fmt.Errorf("model returned invalid policy %q", f.Policy)
 			}
-			severity := drafts.Severity(f.Severity)
+			severity := Severity(f.Severity)
 			if !severity.Valid() {
 				return Result{}, fmt.Errorf("model returned invalid severity %q", f.Severity)
 			}
@@ -184,7 +182,7 @@ func parseResult(msg *anthropic.Message, draftBody string) (Result, error) {
 			if !strings.Contains(draftBody, f.Quote) {
 				return Result{}, fmt.Errorf("model returned a quote not found verbatim in the draft body: %q", f.Quote)
 			}
-			findings[i] = drafts.Finding{Policy: policy, Severity: severity, Issue: f.Issue, Quote: f.Quote}
+			findings[i] = Finding{Policy: policy, Severity: severity, Issue: f.Issue, Quote: f.Quote}
 		}
 
 		return Result{

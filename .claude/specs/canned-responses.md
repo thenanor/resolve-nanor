@@ -67,9 +67,12 @@ comments themselves are created or stored.
   `POST /tickets/{id}/comments` itself and does not submit the comment.
 - **AC-21** - After insertion, the comment body field remains editable and the existing
   `author`/`internal` fields on the comment form are untouched by the insertion.
-- **AC-22** - `POST /tickets/{id}/comments` is unchanged: it still accepts exactly
-  `{author, body, internal}` and never references a canned response id — inserting a canned
-  response is a client-side convenience only (see Invariants and Non-goals).
+- **AC-22** - `POST /tickets/{id}/comments` never references a canned response id — inserting
+  a canned response is a client-side convenience only (see Invariants and Non-goals). Per
+  `REPLYGUARD-1`, the request additionally accepts an optional `fromCannedResponse` flag the
+  composer sets when the submitted body is unedited from the inserted canned response (see
+  `REPLYGUARD-1` AC-23); that flag is never persisted and is not itself a reference to the
+  canned response's `id`, so it does not weaken this AC's "no reference" guarantee.
 - **AC-23** - The comment composer can filter the canned-response picker by tag and/or by a
   case-insensitive substring match on `title`.
 
@@ -82,7 +85,9 @@ comments themselves are created or stored.
   client-side — no foreign key or stored reference connects a `ticket_comments` row back to a
   `canned_responses` row.
 - `POST /tickets/{id}/comments` behavior, request shape, and response shape are unchanged by
-  this feature.
+  this feature, aside from the optional `fromCannedResponse` flag added by `REPLYGUARD-1`
+  (AC-22) — that flag exists to let the guard step introduced there skip already-approved
+  canned text; it carries no canned-response `id` and is never stored.
 
 ## Constraints
 - Follow CLAUDE.md conventions: new `backend/internal/cannedresponses/` package following the

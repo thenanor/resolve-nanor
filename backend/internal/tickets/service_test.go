@@ -844,3 +844,277 @@ func withSubject(in CreateInput, v string) CreateInput     { in.Subject = v; ret
 func withDescription(in CreateInput, v string) CreateInput { in.Description = v; return in }
 func withEmail(in CreateInput, v string) CreateInput       { in.CustomerEmail = v; return in }
 func withPriority(in CreateInput, v string) CreateInput    { in.Priority = v; return in }
+
+// --- REPLYGUARD-1: AddComment's synchronous reply-guard gate ---
+
+// fakeReplyGuardClient is a ReplyGuardClient used to assert on what
+// AddComment sends to reply-guard and to script what it returns, mirroring
+// fakeAudit's role for AuditRecorder.
+type fakeReplyGuardClient struct {
+	calls  []ReplyGuardInput
+	result ReplyGuardOutcome
+	err    error
+}
+
+func (f *fakeReplyGuardClient) Guard(_ context.Context, input ReplyGuardInput) (ReplyGuardOutcome, error) {
+	f.calls = append(f.calls, input)
+	return f.result, f.err
+}
+
+func newTestServiceWithGuard(guard ReplyGuardClient) (*Service, *fakeAudit) {
+	audit := &fakeAudit{}
+	svc := NewService(newFakeRepository(), audit).WithReplyGuard(guard)
+	return svc, audit
+}
+
+func TestAddComment_AC3_InternalNeverGuardedRegardlessOfFlags(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "escalate"}}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	c, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{
+		Author: "agent-1", Body: "internal note", Internal: true, OverrideReason: "",
+	})
+	if err != nil {
+		t.Fatalf("AddComment returned error: %v", err)
+	}
+	if c.GuardResult != nil {
+		t.Errorf("GuardResult = %+v, want nil for an internal comment", c.GuardResult)
+	}
+	if len(guard.calls) != 0 {
+		t.Errorf("guard called %d times, want 0 for an internal comment", len(guard.calls))
+	}
+}
+
+func TestAddComment_AC4_FromCannedResponseSkipsGuardAndKeepsAuditShapeUnchanged(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "escalate"}}
+	svc, audit := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	c, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{
+		Author: "agent-1", Body: "canned text", Internal: false, FromCannedResponse: true,
+	})
+	if err != nil {
+		t.Fatalf("AddComment returned error: %v", err)
+	}
+	if c.GuardResult != nil {
+		t.Errorf("GuardResult = %+v, want nil for a fromCannedResponse comment", c.GuardResult)
+	}
+	if len(guard.calls) != 0 {
+		t.Errorf("guard called %d times, want 0 for a fromCannedResponse comment", len(guard.calls))
+	}
+	entries := audit.forTicket(ticket.ID)
+	last := entries[len(entries)-1]
+	if _, ok := last.Details["verdict"]; ok {
+		t.Errorf("audit details = %v, want no verdict field for an unguarded comment", last.Details)
+	}
+	if len(last.Details) != 2 {
+		t.Errorf("audit details = %v, want exactly commentId/internal (unchanged shape)", last.Details)
+	}
+}
+
+func TestAddComment_AC5_AC6_NonCannedNonInternalTriggersGuardCallWithOnlyInternalNotesAndTicketFields(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "send"}}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "secret internal context", Internal: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "Reply to the customer", Internal: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(guard.calls) != 1 {
+		t.Fatalf("guard called %d times, want 1 (only for the non-internal, non-canned reply)", len(guard.calls))
+	}
+	got := guard.calls[0]
+	if got.TicketSubject != ticket.Subject || got.TicketStatus != string(ticket.Status) || got.TicketPriority != string(ticket.Priority) {
+		t.Errorf("guard input ticket fields = %+v, want ticket's own subject/status/priority", got)
+	}
+	if got.Body != "Reply to the customer" {
+		t.Errorf("guard input Body = %q, want the candidate reply's own body", got.Body)
+	}
+	if len(got.InternalNotes) != 1 || got.InternalNotes[0].Body != "secret internal context" {
+		t.Errorf("guard input InternalNotes = %+v, want exactly the one internal comment", got.InternalNotes)
+	}
+}
+
+func TestAddComment_AC17_SendVerdictCreatesCommentWithGuardResult(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "send", Confidence: ConfidenceHigh, Reasoning: "clean"}}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	c, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "All set, thanks!", Internal: false})
+	if err != nil {
+		t.Fatalf("AddComment returned error: %v", err)
+	}
+	if c.GuardResult == nil || c.GuardResult.Verdict != "send" {
+		t.Fatalf("GuardResult = %+v, want a send verdict", c.GuardResult)
+	}
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if len(final.Comments) != 1 {
+		t.Fatalf("len(comments) = %d, want 1", len(final.Comments))
+	}
+}
+
+func TestAddComment_AC18_ReviseWithoutOverrideReasonReturns409RejectionAndCreatesNoComment(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{
+		Verdict:  "revise",
+		Findings: []ReplyGuardFinding{{Policy: "tone", Severity: "medium", Issue: "a bit curt", Quote: "no"}},
+	}}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	_, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "no", Internal: false})
+	var gre *GuardRejectedError
+	if !errors.As(err, &gre) {
+		t.Fatalf("expected *GuardRejectedError, got %v", err)
+	}
+	if gre.Outcome.Verdict != "revise" || len(gre.Outcome.Findings) != 1 {
+		t.Errorf("Outcome = %+v, want the revise verdict and its findings", gre.Outcome)
+	}
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if len(final.Comments) != 0 {
+		t.Fatalf("len(comments) = %d, want 0 — a rejected revise must not create a Comment", len(final.Comments))
+	}
+}
+
+func TestAddComment_AC19_ReviseWithOverrideReasonCreatesCommentAndAuditsOverride(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "revise", Confidence: ConfidenceMedium}}
+	svc, audit := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	c, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{
+		Author: "agent-1", Body: "sending anyway", Internal: false, OverrideReason: "lead approved by phone",
+	})
+	if err != nil {
+		t.Fatalf("AddComment returned error: %v", err)
+	}
+	if c.GuardResult == nil || c.GuardResult.Verdict != "revise" {
+		t.Fatalf("GuardResult = %+v, want the revise verdict preserved on the created comment", c.GuardResult)
+	}
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if len(final.Comments) != 1 {
+		t.Fatalf("len(comments) = %d, want 1 — an overridden revise must create the Comment", len(final.Comments))
+	}
+	entries := audit.forTicket(ticket.ID)
+	last := entries[len(entries)-1]
+	if last.Details["overrideReason"] != "lead approved by phone" {
+		t.Errorf("audit details = %v, want overrideReason recorded", last.Details)
+	}
+	if last.Details["verdict"] != "revise" {
+		t.Errorf("audit details = %v, want verdict=revise recorded", last.Details)
+	}
+}
+
+func TestAddComment_AC20_EscalateAlwaysRejectsEvenWithOverrideReason(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{
+		Verdict:  "escalate",
+		Findings: []ReplyGuardFinding{{Policy: "disclosure", Severity: "high", Issue: "leaked internal note", Quote: "we found a bug"}},
+	}}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	_, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{
+		Author: "agent-1", Body: "we found a bug", Internal: false, OverrideReason: "please let me send it",
+	})
+	var gre *GuardRejectedError
+	if !errors.As(err, &gre) {
+		t.Fatalf("expected *GuardRejectedError even with an overrideReason, got %v", err)
+	}
+	if gre.Outcome.Verdict != "escalate" {
+		t.Errorf("Outcome.Verdict = %q, want escalate", gre.Outcome.Verdict)
+	}
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if len(final.Comments) != 0 {
+		t.Fatalf("len(comments) = %d, want 0 — escalate is never overridable", len(final.Comments))
+	}
+}
+
+func TestAddComment_AC21_AuditDetailsIncludeGuardFieldsOnlyWhenGuarded(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{
+		Verdict:            "send",
+		Confidence:         ConfidenceHigh,
+		InjectionSuspected: false,
+		Findings:           []ReplyGuardFinding{{Policy: "tone", Severity: "low", Issue: "minor", Quote: "ok"}},
+	}}
+	svc, audit := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	if _, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "ok", Internal: false}); err != nil {
+		t.Fatal(err)
+	}
+	entries := audit.forTicket(ticket.ID)
+	last := entries[len(entries)-1]
+	if last.Details["verdict"] != "send" {
+		t.Errorf("Details[verdict] = %v, want send", last.Details["verdict"])
+	}
+	if last.Details["findingCount"] != 1 {
+		t.Errorf("Details[findingCount] = %v, want 1", last.Details["findingCount"])
+	}
+	if last.Details["confidence"] != "high" {
+		t.Errorf("Details[confidence] = %v, want high", last.Details["confidence"])
+	}
+	if last.Details["injectionSuspected"] != false {
+		t.Errorf("Details[injectionSuspected] = %v, want false", last.Details["injectionSuspected"])
+	}
+	if _, ok := last.Details["overrideReason"]; ok {
+		t.Errorf("Details = %v, want no overrideReason when none was used", last.Details)
+	}
+}
+
+func TestAddComment_AC22_GuardCallFailureCreatesNoCommentAndFailsClosed(t *testing.T) {
+	guard := &fakeReplyGuardClient{err: errors.New("anthropic unavailable")}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	_, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hello", Internal: false})
+	var gue *GuardUnavailableError
+	if !errors.As(err, &gue) {
+		t.Fatalf("expected *GuardUnavailableError, got %v", err)
+	}
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if len(final.Comments) != 0 {
+		t.Fatalf("len(comments) = %d, want 0 — a guard failure must fail closed", len(final.Comments))
+	}
+}
+
+func TestAddComment_UnrecognizedVerdictFailsClosed(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "maybe"}}
+	svc, _ := newTestServiceWithGuard(guard)
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	_, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hello", Internal: false})
+	var gue *GuardUnavailableError
+	if !errors.As(err, &gue) {
+		t.Fatalf("expected an unrecognized verdict to fail closed as *GuardUnavailableError, got %v", err)
+	}
+	final, _ := svc.FindByID(ctx, ticket.ID)
+	if len(final.Comments) != 0 {
+		t.Fatalf("len(comments) = %d, want 0", len(final.Comments))
+	}
+}
+
+func TestAddComment_NilGuardSkipsGateEntirely(t *testing.T) {
+	svc, _ := newTestService() // no WithReplyGuard call — guard is nil
+	ctx := context.Background()
+	ticket, _ := svc.Create(ctx, "test", validInput)
+
+	c, err := svc.AddComment(ctx, "agent-1", ticket.ID, CommentInput{Author: "agent-1", Body: "hello", Internal: false})
+	if err != nil {
+		t.Fatalf("AddComment returned error with no guard configured: %v", err)
+	}
+	if c.GuardResult != nil {
+		t.Errorf("GuardResult = %+v, want nil when no guard is configured", c.GuardResult)
+	}
+}

@@ -3,6 +3,7 @@ package tickets
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -336,5 +337,104 @@ func TestReviewTriage_HTTP_NoPendingSuggestionReturns400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// --- REPLYGUARD-1: POST /tickets/{id}/comments HTTP-level guard responses ---
+
+func newGuardedHandler(t *testing.T, guard ReplyGuardClient) (*Handler, string) {
+	t.Helper()
+	repo := newFakeRepository()
+	svc := NewService(repo, &fakeAudit{}).WithReplyGuard(guard)
+	tks := seedTickets(t, svc, repo, 1, nil)
+	return NewHandler(svc), tks[0].ID
+}
+
+func postComment(h *Handler, ticketID, body string) *httptest.ResponseRecorder {
+	r := chi.NewRouter()
+	h.Mount(r)
+	req := httptest.NewRequest(http.MethodPost, "/tickets/"+ticketID+"/comments", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAddComment_HTTP_AC1_AcceptsOptionalFromCannedResponseAndOverrideReason(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "escalate"}}
+	h, ticketID := newGuardedHandler(t, guard)
+
+	rec := postComment(h, ticketID, `{"author":"agent-1","body":"canned text","internal":false,"fromCannedResponse":true,"overrideReason":""}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	if len(guard.calls) != 0 {
+		t.Errorf("guard called %d times, want 0 for fromCannedResponse", len(guard.calls))
+	}
+}
+
+func TestAddComment_HTTP_AC17_SendVerdictReturns201WithGuardResultInBody(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "send", Confidence: ConfidenceHigh, Reasoning: "clean"}}
+	h, ticketID := newGuardedHandler(t, guard)
+
+	rec := postComment(h, ticketID, `{"author":"agent-1","body":"All set!","internal":false}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var got Comment
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.GuardResult == nil || got.GuardResult.Verdict != "send" {
+		t.Errorf("GuardResult = %+v, want a send verdict", got.GuardResult)
+	}
+}
+
+func TestAddComment_HTTP_AC18_ReviseWithoutOverrideReturns409WithFindings(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{
+		Verdict:  "revise",
+		Findings: []ReplyGuardFinding{{Policy: "tone", Severity: "medium", Issue: "curt", Quote: "no"}},
+	}}
+	h, ticketID := newGuardedHandler(t, guard)
+
+	rec := postComment(h, ticketID, `{"author":"agent-1","body":"no","internal":false}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	var got guardRejectedResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Verdict != "revise" || len(got.Findings) != 1 {
+		t.Errorf("response = %+v, want revise verdict with 1 finding", got)
+	}
+}
+
+func TestAddComment_HTTP_AC19_ReviseWithOverrideReturns201(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "revise"}}
+	h, ticketID := newGuardedHandler(t, guard)
+
+	rec := postComment(h, ticketID, `{"author":"agent-1","body":"sending anyway","internal":false,"overrideReason":"lead approved"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+}
+
+func TestAddComment_HTTP_AC20_EscalateReturns409(t *testing.T) {
+	guard := &fakeReplyGuardClient{result: ReplyGuardOutcome{Verdict: "escalate"}}
+	h, ticketID := newGuardedHandler(t, guard)
+
+	rec := postComment(h, ticketID, `{"author":"agent-1","body":"we found a bug","internal":false,"overrideReason":"please"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+}
+
+func TestAddComment_HTTP_AC22_GuardUnavailableReturns502(t *testing.T) {
+	guard := &fakeReplyGuardClient{err: errors.New("anthropic unavailable")}
+	h, ticketID := newGuardedHandler(t, guard)
+
+	rec := postComment(h, ticketID, `{"author":"agent-1","body":"hello","internal":false}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
 	}
 }

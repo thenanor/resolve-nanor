@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,7 +17,6 @@ import (
 	"resolve/internal/cannedresponses"
 	"resolve/internal/config"
 	"resolve/internal/docs"
-	"resolve/internal/drafts"
 	"resolve/internal/health"
 	"resolve/internal/migrations"
 	"resolve/internal/stats"
@@ -49,19 +47,10 @@ func main() {
 		ticketsRepo,
 		ticketsAuditAdapter{auditService},
 		httpTriageNotifier{baseURL: cfg.TriageServiceURL, client: http.DefaultClient},
-	)
+	).WithReplyGuard(httpReplyGuardClient{baseURL: cfg.ReplyGuardServiceURL, client: http.DefaultClient})
 
 	cannedResponsesRepo := cannedresponses.NewPostgresRepository(pool)
 	cannedResponsesService := cannedresponses.NewService(cannedResponsesRepo)
-
-	draftsRepo := drafts.NewPostgresRepository(pool)
-	draftsService := drafts.NewService(
-		draftsRepo,
-		ticketReaderAdapter{ticketsService},
-		ticketCommenterAdapter{ticketsService},
-		draftsAuditAdapter{auditService},
-		httpReplyGuardNotifier{baseURL: cfg.ReplyGuardServiceURL, client: http.DefaultClient},
-	)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -71,7 +60,6 @@ func main() {
 	audit.NewHandler(auditService).Mount(r)
 	stats.NewHandler(ticketsService).Mount(r)
 	cannedresponses.NewHandler(cannedResponsesService).Mount(r)
-	drafts.NewHandler(draftsService).Mount(r)
 	health.NewHandler(cfg.Version).Mount(r)
 	docs.NewHandler().Mount(r)
 
@@ -151,104 +139,83 @@ func (n httpTriageNotifier) NotifyTicketCreated(ctx context.Context, ticketID, s
 	return nil
 }
 
-// ticketReaderAdapter satisfies drafts.TicketReader by delegating to
-// tickets.Service, translating its Ticket/Comment shape into drafts' own
-// narrower TicketContext/InternalNote types so neither package needs to
-// import the other's full domain, mirroring ticketsAuditAdapter's role.
-type ticketReaderAdapter struct {
-	svc *tickets.Service
-}
-
-func (a ticketReaderAdapter) ReadContext(ctx context.Context, ticketID string) (drafts.TicketContext, []drafts.InternalNote, error) {
-	t, err := a.svc.FindByID(ctx, ticketID)
-	if err != nil {
-		var nf *tickets.NotFoundError
-		if errors.As(err, &nf) {
-			return drafts.TicketContext{}, nil, &drafts.NotFoundError{ID: ticketID}
-		}
-		return drafts.TicketContext{}, nil, err
-	}
-
-	notes := []drafts.InternalNote{}
-	for _, c := range t.Comments {
-		if c.Internal {
-			notes = append(notes, drafts.InternalNote{Author: c.Author, Body: c.Body, At: c.At})
-		}
-	}
-
-	return drafts.TicketContext{
-		Subject:     t.Subject,
-		Description: t.Description,
-		Status:      string(t.Status),
-		Priority:    string(t.Priority),
-	}, notes, nil
-}
-
-// ticketCommenterAdapter satisfies drafts.TicketCommenter by delegating to
-// tickets.Service.AddComment — a sent draft becomes a real, customer-visible
-// (Internal: false) Comment through the exact same path a direct
-// POST /tickets/{id}/comments call uses.
-type ticketCommenterAdapter struct {
-	svc *tickets.Service
-}
-
-func (a ticketCommenterAdapter) AddReply(ctx context.Context, actor, ticketID, author, body string) error {
-	_, err := a.svc.AddComment(ctx, actor, ticketID, tickets.CommentInput{Author: author, Body: body, Internal: false})
-	return err
-}
-
-// draftsAuditAdapter satisfies drafts.AuditRecorder the same way
-// ticketsAuditAdapter satisfies tickets.AuditRecorder: delegating to
-// audit.Service so drafts doesn't need to import it directly.
-type draftsAuditAdapter struct {
-	svc *audit.Service
-}
-
-func (a draftsAuditAdapter) Record(ctx context.Context, actor, action, ticketID string, details map[string]any) error {
-	return a.svc.Record(ctx, actor, action, ticketID, details)
-}
-
-// httpReplyGuardNotifier satisfies drafts.ReplyGuardNotifier by POSTing to
-// the separate reply-guard service, mirroring httpTriageNotifier.
-type httpReplyGuardNotifier struct {
+// httpReplyGuardClient satisfies tickets.ReplyGuardClient by calling the
+// separate reply-guard service synchronously and decoding its full
+// assessment out of the response body — unlike httpTriageNotifier (which
+// only fires-and-forgets a notification), tickets.Service.AddComment blocks
+// on this call and uses its result to gate comment creation.
+type httpReplyGuardClient struct {
 	baseURL string
 	client  *http.Client
 }
 
-func (n httpReplyGuardNotifier) NotifyDraftCreated(ctx context.Context, req drafts.GuardRequest) error {
-	notes := make([]map[string]string, len(req.InternalNotes))
-	for i, note := range req.InternalNotes {
-		notes[i] = map[string]string{"author": note.Author, "body": note.Body}
+func (c httpReplyGuardClient) Guard(ctx context.Context, input tickets.ReplyGuardInput) (tickets.ReplyGuardOutcome, error) {
+	notes := make([]map[string]string, len(input.InternalNotes))
+	for i, n := range input.InternalNotes {
+		notes[i] = map[string]string{"author": n.Author, "body": n.Body}
 	}
 
-	body, err := json.Marshal(map[string]any{
-		"ticketId":          req.TicketID,
-		"draftId":           req.DraftID,
-		"ticketSubject":     req.Ticket.Subject,
-		"ticketDescription": req.Ticket.Description,
-		"ticketStatus":      req.Ticket.Status,
-		"ticketPriority":    req.Ticket.Priority,
+	reqBody, err := json.Marshal(map[string]any{
+		"ticketSubject":     input.TicketSubject,
+		"ticketDescription": input.TicketDescription,
+		"ticketStatus":      input.TicketStatus,
+		"ticketPriority":    input.TicketPriority,
 		"internalNotes":     notes,
-		"draftBody":         req.DraftBody,
+		"body":              input.Body,
 	})
 	if err != nil {
-		return err
+		return tickets.ReplyGuardOutcome{}, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, n.baseURL+"/guard", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/guard", bytes.NewReader(reqBody))
 	if err != nil {
-		return err
+		return tickets.ReplyGuardOutcome{}, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := n.client.Do(httpReq)
+	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		return tickets.ReplyGuardOutcome{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("reply-guard service returned status %d for draft %s (ticket %s)", resp.StatusCode, req.DraftID, req.TicketID)
+	if resp.StatusCode != http.StatusOK {
+		return tickets.ReplyGuardOutcome{}, fmt.Errorf("reply-guard service returned status %d", resp.StatusCode)
 	}
-	return nil
+
+	var wire struct {
+		Verdict  string `json:"verdict"`
+		Findings []struct {
+			Policy   string `json:"policy"`
+			Severity string `json:"severity"`
+			Issue    string `json:"issue"`
+			Quote    string `json:"quote"`
+		} `json:"findings"`
+		Confidence         string `json:"confidence"`
+		Reasoning          string `json:"reasoning"`
+		InjectionSuspected bool   `json:"injectionSuspected"`
+		RequireHuman       bool   `json:"requireHuman"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return tickets.ReplyGuardOutcome{}, fmt.Errorf("decode reply-guard response: %w", err)
+	}
+
+	confidence := tickets.Confidence(wire.Confidence)
+	if !confidence.Valid() {
+		return tickets.ReplyGuardOutcome{}, fmt.Errorf("reply-guard returned invalid confidence %q", wire.Confidence)
+	}
+
+	findings := make([]tickets.ReplyGuardFinding, len(wire.Findings))
+	for i, f := range wire.Findings {
+		findings[i] = tickets.ReplyGuardFinding{Policy: f.Policy, Severity: f.Severity, Issue: f.Issue, Quote: f.Quote}
+	}
+
+	return tickets.ReplyGuardOutcome{
+		Verdict:            wire.Verdict,
+		Findings:           findings,
+		Confidence:         confidence,
+		Reasoning:          wire.Reasoning,
+		InjectionSuspected: wire.InjectionSuspected,
+		RequireHuman:       wire.RequireHuman,
+	}, nil
 }

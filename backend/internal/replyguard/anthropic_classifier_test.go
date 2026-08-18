@@ -7,7 +7,6 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"resolve/internal/drafts"
 )
 
 // toolInputSchema extracts the input_schema properties map for guard_reply
@@ -68,8 +67,8 @@ func TestBuildRequest_FindingSchemaEnumsMatchDraftsPackage(t *testing.T) {
 	req := buildRequest(GuardInput{})
 	props := toolInputSchema(t, req)
 
-	assertSameSet(t, "policy", findingItemEnum(t, props, "policy"), enumStrings(drafts.AllPolicies))
-	assertSameSet(t, "severity", findingItemEnum(t, props, "severity"), enumStrings(drafts.AllSeverities))
+	assertSameSet(t, "policy", findingItemEnum(t, props, "policy"), enumStrings(AllPolicies))
+	assertSameSet(t, "severity", findingItemEnum(t, props, "severity"), enumStrings(AllSeverities))
 }
 
 func TestBuildRequest_SchemaHasNoVerdictField(t *testing.T) {
@@ -133,7 +132,7 @@ func assertSameSet(t *testing.T, field string, got, want []string) {
 	}
 	for _, g := range got {
 		if !wantSet[g] {
-			t.Errorf("%s enum contains %q, not present in drafts.All (drift between replyguard's tool schema and the drafts package)", field, g)
+			t.Errorf("%s enum contains %q, not present in the expected enum (drift in replyguard's tool schema)", field, g)
 		}
 	}
 }
@@ -144,7 +143,7 @@ func TestBuildRequest_SystemPromptMentionsAllPolicyLinesAndExcludesGrammar(t *te
 		t.Fatalf("expected exactly one system block, got %d", len(req.System))
 	}
 	prompt := req.System[0].Text
-	for _, p := range drafts.AllPolicies {
+	for _, p := range AllPolicies {
 		if !strings.Contains(prompt, string(p)) {
 			t.Errorf("system prompt missing policy %q", p)
 		}
@@ -174,7 +173,7 @@ func TestParseResult_ValidToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseResult returned error: %v", err)
 	}
-	if len(result.Findings) != 1 || result.Findings[0].Policy != drafts.PolicyDisclosure || result.Findings[0].Severity != drafts.SeverityHigh {
+	if len(result.Findings) != 1 || result.Findings[0].Policy != PolicyDisclosure || result.Findings[0].Severity != SeverityHigh {
 		t.Errorf("Findings = %+v", result.Findings)
 	}
 	if result.Findings[0].Quote != "already refunded" {

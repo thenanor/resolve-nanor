@@ -5,41 +5,42 @@ import (
 	"fmt"
 	"log"
 
-	"resolve/internal/drafts"
 	"resolve/internal/tickets"
 )
 
 type Service struct {
 	classifier Classifier
-	updater    DraftUpdater
 }
 
-func NewService(classifier Classifier, updater DraftUpdater) *Service {
-	return &Service{classifier: classifier, updater: updater}
+func NewService(classifier Classifier) *Service {
+	return &Service{classifier: classifier}
 }
 
-// Guard assesses a draft and writes the result back. It runs fully
-// synchronously — the main app already decouples draft-creation latency by
-// calling this service from its own goroutine (drafts.Service.dispatchGuard),
-// so there is no benefit to also backgrounding work on this side. See
-// triage.Service.Triage for the identical rationale.
-func (s *Service) Guard(ctx context.Context, ticketID, draftID string, input GuardInput) error {
+// Guard assesses a candidate reply and returns the full result. It runs
+// fully synchronously — the caller (tickets.Service.AddComment) is itself
+// the request path that gates comment creation on this call, so there is
+// no benefit to backgrounding work on this side.
+func (s *Service) Guard(ctx context.Context, input GuardInput) (GuardResult, error) {
 	result, err := s.classifier.Guard(ctx, input)
 	if err != nil {
-		return fmt.Errorf("guard draft %s (ticket %s): %w", draftID, ticketID, err)
+		return GuardResult{}, fmt.Errorf("guard candidate reply: %w", err)
 	}
 	if result.InjectionSuspected {
-		log.Printf("reply-guard: possible prompt injection in draft %s (ticket %s): %s", draftID, ticketID, result.Reasoning)
+		log.Printf("reply-guard: possible prompt injection suspected: %s", result.Reasoning)
 	}
 
 	confidence := confidenceLabel(result.Confidence)
 	verdict := deriveVerdict(result.Findings, result.InjectionSuspected)
 	requireHuman := deriveRequireHuman(verdict, result.Findings, confidence)
 
-	if err := s.updater.UpdateGuardResult(ctx, ticketID, draftID, string(verdict), result.Findings, string(confidence), result.Reasoning, result.InjectionSuspected, requireHuman); err != nil {
-		return fmt.Errorf("update draft %s with guard result: %w", draftID, err)
-	}
-	return nil
+	return GuardResult{
+		Verdict:            verdict,
+		Findings:           result.Findings,
+		Confidence:         confidence,
+		Reasoning:          result.Reasoning,
+		InjectionSuspected: result.InjectionSuspected,
+		RequireHuman:       requireHuman,
+	}, nil
 }
 
 // confidenceLabel buckets a 0-1 confidence score into the low/medium/high
@@ -59,44 +60,44 @@ func confidenceLabel(confidence float64) tickets.Confidence {
 // deriveVerdict implements the reply-guard spec's AC-14/15/16 exactly:
 // escalate on any high-severity finding or suspected injection; send only
 // when there's nothing above low severity; revise otherwise. Verdict is
-// always computed here, never taken from the model directly (see the
-// Result doc comment for why).
-func deriveVerdict(findings []drafts.Finding, injectionSuspected bool) drafts.Verdict {
+// always computed here, never taken from the model directly (see
+// GuardResult's doc comment for why).
+func deriveVerdict(findings []Finding, injectionSuspected bool) Verdict {
 	hasHigh := false
 	hasMedium := false
 	for _, f := range findings {
 		switch f.Severity {
-		case drafts.SeverityHigh:
+		case SeverityHigh:
 			hasHigh = true
-		case drafts.SeverityMedium:
+		case SeverityMedium:
 			hasMedium = true
 		}
 	}
 	if hasHigh || injectionSuspected {
-		return drafts.VerdictEscalate
+		return VerdictEscalate
 	}
 	if hasMedium {
-		return drafts.VerdictRevise
+		return VerdictRevise
 	}
-	return drafts.VerdictSend
+	return VerdictSend
 }
 
-// deriveRequireHuman implements AC-13: true whenever the verdict is
+// deriveRequireHuman implements AC-16: true whenever the verdict is
 // escalate, whenever any finding is high severity, or whenever confidence
 // is low; false only for a clean send at non-low confidence. The
 // high-severity check is redundant with escalate given deriveVerdict's
 // logic (a high finding always produces escalate) but is kept explicit,
 // matching the spec's wording, as defense against the two functions ever
 // drifting apart.
-func deriveRequireHuman(verdict drafts.Verdict, findings []drafts.Finding, confidence tickets.Confidence) bool {
-	if verdict == drafts.VerdictEscalate {
+func deriveRequireHuman(verdict Verdict, findings []Finding, confidence tickets.Confidence) bool {
+	if verdict == VerdictEscalate {
 		return true
 	}
 	if confidence == tickets.ConfidenceLow {
 		return true
 	}
 	for _, f := range findings {
-		if f.Severity == drafts.SeverityHigh {
+		if f.Severity == SeverityHigh {
 			return true
 		}
 	}

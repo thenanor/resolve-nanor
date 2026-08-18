@@ -123,23 +123,36 @@ func (h *Handler) changeStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) addComment(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Author   string `json:"author"`
-		Body     string `json:"body"`
-		Internal bool   `json:"internal"`
+		Author             string `json:"author"`
+		Body               string `json:"body"`
+		Internal           bool   `json:"internal"`
+		FromCannedResponse bool   `json:"fromCannedResponse"`
+		OverrideReason     string `json:"overrideReason"`
 	}
 	if err := httpx.DecodeJSON(r, &body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	c, err := h.service.AddComment(r.Context(), httpx.Actor(r), chi.URLParam(r, "id"), CommentInput{
-		Author:   body.Author,
-		Body:     body.Body,
-		Internal: body.Internal,
+		Author:             body.Author,
+		Body:               body.Body,
+		Internal:           body.Internal,
+		FromCannedResponse: body.FromCannedResponse,
+		OverrideReason:     body.OverrideReason,
 	})
 	if respondIfError(w, err) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, c)
+}
+
+// guardRejectedResponse is the 409 body for a *GuardRejectedError: the
+// full ReplyGuardOutcome (verdict/findings/confidence/reasoning/
+// injectionSuspected/requireHuman per AC-18/AC-20) plus a message field
+// for consistency with every other error response in this API.
+type guardRejectedResponse struct {
+	Message string `json:"message"`
+	ReplyGuardOutcome
 }
 
 func (h *Handler) applyTriage(w http.ResponseWriter, r *http.Request) {
@@ -200,11 +213,17 @@ func respondIfError(w http.ResponseWriter, err error) bool {
 	}
 	var ve *ValidationError
 	var nf *NotFoundError
+	var gre *GuardRejectedError
+	var gue *GuardUnavailableError
 	switch {
 	case errors.As(err, &ve):
 		httpx.WriteError(w, http.StatusBadRequest, ve.Message)
 	case errors.As(err, &nf):
 		httpx.WriteError(w, http.StatusNotFound, nf.Error())
+	case errors.As(err, &gre):
+		httpx.WriteJSON(w, http.StatusConflict, guardRejectedResponse{Message: gre.Error(), ReplyGuardOutcome: gre.Outcome})
+	case errors.As(err, &gue):
+		httpx.WriteError(w, http.StatusBadGateway, "reply-guard could not complete review; no comment was created")
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, "internal server error")
 	}

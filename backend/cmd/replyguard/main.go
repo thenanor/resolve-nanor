@@ -25,8 +25,7 @@ func main() {
 
 	anthropicClient := anthropic.NewClient(option.WithAPIKey(cfg.AnthropicAPIKey))
 	classifier := replyguard.NewAnthropicClassifier(anthropicClient)
-	updater := &replyguard.HTTPDraftUpdater{BaseURL: cfg.MainAppURL, Client: http.DefaultClient}
-	service := replyguard.NewService(classifier, updater)
+	service := replyguard.NewService(classifier)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)

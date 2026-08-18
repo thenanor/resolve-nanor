@@ -10,7 +10,6 @@ servers:
   - url: /
 tags:
   - name: tickets
-  - name: drafts
   - name: audit
   - name: stats
   - name: canned-responses
@@ -198,6 +197,16 @@ paths:
     post:
       tags: [tickets]
       summary: Add a comment to a ticket
+      description: >-
+        For internal:false comments not sourced from a canned response,
+        reply-guard reviews the body synchronously before the comment is
+        created — see REPLYGUARD-1. A send verdict returns 201 with
+        guardResult populated; a revise verdict without overrideReason, or
+        an escalate verdict (which can never be overridden), returns 409
+        with the guard findings and no comment created; a failed guard call
+        returns 502 and no comment created. internal:true comments and
+        fromCannedResponse:true comments skip the guard entirely and always
+        return 201 with guardResult: null.
       parameters:
         - $ref: "#/components/parameters/TicketId"
         - $ref: "#/components/parameters/XActor"
@@ -218,150 +227,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
-
-  /tickets/{id}/drafts:
-    post:
-      tags: [drafts]
-      summary: Stage a draft reply for review
-      description: >-
-        Dispatches a fire-and-forget call to the reply-guard service and
-        returns immediately with status pending_review and a null
-        guardResult — poll GET .../drafts/{draftId} for the outcome.
-      parameters:
-        - $ref: "#/components/parameters/TicketId"
-        - $ref: "#/components/parameters/XActor"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateDraftRequest"
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Draft"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
-  /tickets/{id}/drafts/{draftId}:
-    get:
-      tags: [drafts]
-      summary: Get a draft by id
-      parameters:
-        - $ref: "#/components/parameters/TicketId"
-        - $ref: "#/components/parameters/DraftId"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Draft"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    put:
-      tags: [drafts]
-      summary: Edit a draft's body and resubmit it for review
-      description: >-
-        Only allowed when the draft's guardResult.verdict is revise or
-        escalate, or the guard call itself failed (status guard_failed).
-        Resets status to pending_review, clears guardResult, and
-        re-dispatches the guard call.
-      parameters:
-        - $ref: "#/components/parameters/TicketId"
-        - $ref: "#/components/parameters/DraftId"
-        - $ref: "#/components/parameters/XActor"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [body]
-              properties:
-                body:
-                  type: string
-                  minLength: 1
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Draft"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-
-  /tickets/{id}/drafts/{draftId}/send:
-    post:
-      tags: [drafts]
-      summary: Send a draft as a real, customer-visible comment
-      description: >-
-        Requires status guarded. A send verdict sends unconditionally. A
-        revise verdict requires a non-empty overrideReason to send anyway
-        (logged to the audit trail). An escalate verdict can never be sent,
-        override or not — the only way forward is editing the draft
-        (PUT .../drafts/{draftId}), which re-triggers review.
-      parameters:
-        - $ref: "#/components/parameters/TicketId"
-        - $ref: "#/components/parameters/DraftId"
-        - $ref: "#/components/parameters/XActor"
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                overrideReason:
-                  type: string
-                  description: Required to send a draft with a revise verdict.
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Draft"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-
-  /tickets/{id}/drafts/{draftId}/guard-result:
-    post:
-      tags: [drafts]
-      summary: Record a reply-guard assessment
-      description: Called by the reply-guard service, not end users.
-      parameters:
-        - $ref: "#/components/parameters/TicketId"
-        - $ref: "#/components/parameters/DraftId"
-        - $ref: "#/components/parameters/XActor"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GuardResult"
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Draft"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/GuardUnavailable"
 
   /tickets/{id}/audit:
     get:
@@ -536,12 +405,6 @@ components:
       required: true
       schema:
         type: string
-    DraftId:
-      name: draftId
-      in: path
-      required: true
-      schema:
-        type: string
     Tag:
       name: tag
       in: query
@@ -566,7 +429,18 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     Conflict:
-      description: The draft's current state doesn't allow this operation
+      description: >-
+        Reply-guard rejected this reply (verdict revise with no
+        overrideReason, or verdict escalate) — no comment was created.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    GuardUnavailable:
+      description: >-
+        The reply-guard service could not complete its review (unreachable,
+        non-2xx response, or malformed output) — fails closed; no comment
+        was created.
       content:
         application/json:
           schema:
@@ -645,6 +519,20 @@ components:
           type: boolean
           default: false
           description: Internal notes are agent-only, never exposed to customers.
+        fromCannedResponse:
+          type: boolean
+          default: false
+          description: >-
+            Set when the submitted body is unedited from an inserted canned
+            response — skips reply-guard review entirely (REPLYGUARD-1
+            AC-4). Has no effect when internal is true. Never persisted.
+        overrideReason:
+          type: string
+          description: >-
+            Required to create the comment when reply-guard's verdict was
+            revise; has no effect on any other verdict (REPLYGUARD-1
+            AC-19). Has no effect when internal or fromCannedResponse is
+            true.
 
     Comment:
       type: object
@@ -660,6 +548,15 @@ components:
         at:
           type: string
           format: date-time
+        guardResult:
+          allOf:
+            - $ref: "#/components/schemas/GuardResult"
+          nullable: true
+          description: >-
+            Reply-guard's assessment, present only on the Comment returned
+            immediately by POST /tickets/{id}/comments when the guard
+            actually ran (REPLYGUARD-1). Never persisted — always null on a
+            Comment read back later, e.g. embedded in Ticket.comments.
 
     Ticket:
       type: object
@@ -708,7 +605,7 @@ components:
 
     Verdict:
       type: string
-      description: reply-guard's recommendation for a draft.
+      description: reply-guard's recommendation for a candidate reply.
       enum: [send, revise, escalate]
 
     Policy:
@@ -735,8 +632,8 @@ components:
         quote:
           type: string
           description: >-
-            A literal, contiguous substring of the draft body that
-            triggered this finding — never a paraphrase.
+            A literal, contiguous substring of the candidate reply's body
+            that triggered this finding — never a paraphrase.
 
     GuardResult:
       type: object
@@ -756,44 +653,8 @@ components:
         requireHuman:
           type: boolean
           description: >-
-            True when a second human (not just the drafting agent) should
+            True when a second human (not just the replying agent) should
             review before sending.
-
-    Draft:
-      type: object
-      properties:
-        id:
-          type: string
-        ticketId:
-          type: string
-        author:
-          type: string
-        body:
-          type: string
-        status:
-          type: string
-          enum: [pending_review, guarded, guard_failed, sent]
-        guardResult:
-          allOf:
-            - $ref: "#/components/schemas/GuardResult"
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    CreateDraftRequest:
-      type: object
-      required: [author, body]
-      properties:
-        author:
-          type: string
-          minLength: 1
-        body:
-          type: string
-          minLength: 1
 
     AuditEntry:
       type: object
