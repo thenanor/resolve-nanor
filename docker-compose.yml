@@ -43,9 +43,10 @@ services:
       TRIAGE_PORT: 3001
       MAIN_APP_URL: http://app:3000
 
-  # Stateless, same rationale as triage above — draft creation must not
-  # block on reply-guard's availability (see
-  # drafts.Service.dispatchGuard's fire-and-forget notification).
+  # Unlike triage, reply-guard is on the critical path: app calls it
+  # synchronously and fails closed (see tickets.Service's guard call and
+  # AC-5/AC-22) — every non-canned customer-facing reply 502s if this is
+  # down. Treat it as critical for uptime monitoring/alerting.
   replyguard:
     build: ./backend
     restart: unless-stopped
