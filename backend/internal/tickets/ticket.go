@@ -103,4 +103,10 @@ type Comment struct {
 	Body     string `json:"body"`
 	Internal bool   `json:"internal"`
 	At       string `json:"at"`
+	// GuardResult is reply-guard's assessment of this comment's body,
+	// populated only on the Comment AddComment just returned from
+	// creating a guarded reply — never set on the copy passed to
+	// Repository.AddComment, so it never persists and is always nil on a
+	// Comment read back later (e.g. embedded in Ticket.Comments).
+	GuardResult *ReplyGuardOutcome `json:"guardResult"`
 }

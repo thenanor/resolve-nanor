@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"regexp"
 	"strings"
@@ -59,12 +60,20 @@ type CommentInput struct {
 	Author   string
 	Body     string
 	Internal bool
+	// FromCannedResponse skips the reply-guard gate entirely when true —
+	// canned-response text is pre-approved by whoever created it (see
+	// REPLYGUARD-1 AC-4). Never persisted onto the created Comment.
+	FromCannedResponse bool
+	// OverrideReason waives a "revise" verdict only; it has no effect on
+	// any other verdict, and never waives "escalate" (AC-18/AC-19/AC-20).
+	OverrideReason string
 }
 
 type Service struct {
 	repo   Repository
 	audit  AuditRecorder
 	triage TriageNotifier
+	guard  ReplyGuardClient
 }
 
 // NewService wires a Service together. triage is variadic (0 or 1 value)
@@ -78,6 +87,19 @@ func NewService(repo Repository, audit AuditRecorder, triage ...TriageNotifier) 
 		t = triage[0]
 	}
 	return &Service{repo: repo, audit: audit, triage: t}
+}
+
+// WithReplyGuard attaches guard to an already-constructed Service and
+// returns it for chaining. A separate method rather than a second
+// variadic NewService parameter — Go permits only one variadic parameter
+// and triage already occupies it — so every existing NewService call site
+// keeps compiling unchanged. AddComment treats a nil guard as "guarding
+// not configured" and skips the gate entirely (mirrors s.triage == nil in
+// Create); production wiring (cmd/api/main.go) always calls
+// WithReplyGuard.
+func (s *Service) WithReplyGuard(guard ReplyGuardClient) *Service {
+	s.guard = guard
+	return s
 }
 
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
@@ -294,6 +316,13 @@ func (s *Service) ReviewTriage(ctx context.Context, actor, id string, accept boo
 	return t, nil
 }
 
+// AddComment creates a ticket comment. For a customer-facing reply
+// (Internal: false) that isn't sourced from a canned response, it first
+// runs the candidate body through reply-guard synchronously — see
+// REPLYGUARD-1 for the full contract. The returned Comment's GuardResult
+// is non-nil only when the guard actually ran (set on the returned copy
+// only, never on the copy passed to Repository.AddComment, so it never
+// persists — see Comment.GuardResult's doc comment).
 func (s *Service) AddComment(ctx context.Context, actor, id string, input CommentInput) (*Comment, error) {
 	t, err := s.FindByID(ctx, id)
 	if err != nil {
@@ -305,11 +334,55 @@ func (s *Service) AddComment(ctx context.Context, actor, id string, input Commen
 	if strings.TrimSpace(input.Body) == "" {
 		return nil, invalid("body must be a non-empty string")
 	}
+	body := strings.TrimSpace(input.Body)
+
+	var outcome *ReplyGuardOutcome
+	overridden := false
+
+	if !input.Internal && !input.FromCannedResponse && s.guard != nil {
+		var notes []ReplyGuardNote
+		for _, c := range t.Comments {
+			if c.Internal {
+				notes = append(notes, ReplyGuardNote{Author: c.Author, Body: c.Body})
+			}
+		}
+
+		result, gerr := s.guard.Guard(ctx, ReplyGuardInput{
+			TicketSubject:     t.Subject,
+			TicketDescription: t.Description,
+			TicketStatus:      string(t.Status),
+			TicketPriority:    string(t.Priority),
+			InternalNotes:     notes,
+			Body:              body,
+		})
+		if gerr != nil {
+			log.Printf("reply-guard call failed for ticket %s: %v", t.ID, gerr)
+			return nil, &GuardUnavailableError{Err: gerr}
+		}
+		outcome = &result
+
+		switch result.Verdict {
+		case guardVerdictSend:
+			// no gate — fall through to create the comment.
+		case guardVerdictEscalate:
+			// escalate is a hard block: never overridable (AC-20).
+			return nil, &GuardRejectedError{Outcome: result}
+		case guardVerdictRevise:
+			if strings.TrimSpace(input.OverrideReason) == "" {
+				return nil, &GuardRejectedError{Outcome: result} // AC-18
+			}
+			overridden = true // AC-19
+		default:
+			// An unrecognized verdict is itself malformed output — fail
+			// closed rather than guess (AC-22).
+			return nil, &GuardUnavailableError{Err: fmt.Errorf("reply-guard returned unrecognized verdict %q", result.Verdict)}
+		}
+	}
 
 	c := Comment{
 		ID:       ids.New("cmt"),
 		Author:   strings.TrimSpace(input.Author),
-		Body:     strings.TrimSpace(input.Body),
+		Body:     body,
 		Internal: input.Internal,
 		At:       now(),
 	}
@@ -317,13 +390,27 @@ func (s *Service) AddComment(ctx context.Context, actor, id string, input Commen
 	if err := s.repo.AddComment(ctx, t.ID, c); err != nil {
 		return nil, err
 	}
-	if err := s.audit.Record(ctx, actor, "ticket.commented", t.ID, map[string]any{
+
+	details := map[string]any{
 		"commentId": c.ID,
 		"internal":  c.Internal,
-	}); err != nil {
+	}
+	if outcome != nil { // AC-21: only guarded creations get the extra fields
+		details["verdict"] = outcome.Verdict
+		details["findingCount"] = len(outcome.Findings)
+		details["confidence"] = string(outcome.Confidence)
+		details["injectionSuspected"] = outcome.InjectionSuspected
+		if overridden {
+			details["overrideReason"] = strings.TrimSpace(input.OverrideReason)
+		}
+	}
+	if err := s.audit.Record(ctx, actor, "ticket.commented", t.ID, details); err != nil {
 		return nil, err
 	}
-	return &c, nil
+
+	result := c
+	result.GuardResult = outcome
+	return &result, nil
 }
 
 func (s *Service) FindAll(ctx context.Context, filter Filter) ([]Ticket, error) {

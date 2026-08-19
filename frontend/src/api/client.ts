@@ -12,10 +12,15 @@ export function setActor(actor: string): void {
 
 class ApiRequestError extends Error {
   status: number
+  // The full parsed error response body, when the server returned one —
+  // e.g. a GuardRejection (verdict/findings/...) on a 409 from
+  // POST /tickets/{id}/comments. undefined if the body couldn't be parsed.
+  body: unknown
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, body: unknown) {
     super(message)
     this.status = status
+    this.body = body
   }
 }
 
@@ -30,13 +35,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     let message = `request failed with status ${res.status}`
+    let body: unknown
     try {
-      const body = (await res.json()) as ApiError
-      if (body?.message) message = body.message
+      body = await res.json()
+      const parsed = body as ApiError
+      if (parsed?.message) message = parsed.message
     } catch {
       // ignore body parse failures, fall back to the generic message
     }
-    throw new ApiRequestError(message, res.status)
+    throw new ApiRequestError(message, res.status, body)
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
@@ -53,6 +60,12 @@ export interface AddCommentInput {
   author: string
   body: string
   internal: boolean
+  // Skips reply-guard review entirely when true — set only when body is
+  // unedited from an inserted canned response (REPLYGUARD-1 AC-4/AC-23).
+  fromCannedResponse?: boolean
+  // Waives a "revise" verdict only; required to resend after a 409 with
+  // verdict "revise" (REPLYGUARD-1 AC-19). Has no effect otherwise.
+  overrideReason?: string
 }
 
 interface TicketPage {

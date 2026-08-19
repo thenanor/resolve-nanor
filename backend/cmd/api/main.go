@@ -47,7 +47,7 @@ func main() {
 		ticketsRepo,
 		ticketsAuditAdapter{auditService},
 		httpTriageNotifier{baseURL: cfg.TriageServiceURL, client: http.DefaultClient},
-	)
+	).WithReplyGuard(httpReplyGuardClient{baseURL: cfg.ReplyGuardServiceURL, client: http.DefaultClient})
 
 	cannedResponsesRepo := cannedresponses.NewPostgresRepository(pool)
 	cannedResponsesService := cannedresponses.NewService(cannedResponsesRepo)
@@ -137,4 +137,85 @@ func (n httpTriageNotifier) NotifyTicketCreated(ctx context.Context, ticketID, s
 		return fmt.Errorf("triage service returned status %d for ticket %s", resp.StatusCode, ticketID)
 	}
 	return nil
+}
+
+// httpReplyGuardClient satisfies tickets.ReplyGuardClient by calling the
+// separate reply-guard service synchronously and decoding its full
+// assessment out of the response body — unlike httpTriageNotifier (which
+// only fires-and-forgets a notification), tickets.Service.AddComment blocks
+// on this call and uses its result to gate comment creation.
+type httpReplyGuardClient struct {
+	baseURL string
+	client  *http.Client
+}
+
+func (c httpReplyGuardClient) Guard(ctx context.Context, input tickets.ReplyGuardInput) (tickets.ReplyGuardOutcome, error) {
+	notes := make([]map[string]string, len(input.InternalNotes))
+	for i, n := range input.InternalNotes {
+		notes[i] = map[string]string{"author": n.Author, "body": n.Body}
+	}
+
+	reqBody, err := json.Marshal(map[string]any{
+		"ticketSubject":     input.TicketSubject,
+		"ticketDescription": input.TicketDescription,
+		"ticketStatus":      input.TicketStatus,
+		"ticketPriority":    input.TicketPriority,
+		"internalNotes":     notes,
+		"body":              input.Body,
+	})
+	if err != nil {
+		return tickets.ReplyGuardOutcome{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/guard", bytes.NewReader(reqBody))
+	if err != nil {
+		return tickets.ReplyGuardOutcome{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return tickets.ReplyGuardOutcome{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return tickets.ReplyGuardOutcome{}, fmt.Errorf("reply-guard service returned status %d", resp.StatusCode)
+	}
+
+	var wire struct {
+		Verdict  string `json:"verdict"`
+		Findings []struct {
+			Policy   string `json:"policy"`
+			Severity string `json:"severity"`
+			Issue    string `json:"issue"`
+			Quote    string `json:"quote"`
+		} `json:"findings"`
+		Confidence         string `json:"confidence"`
+		Reasoning          string `json:"reasoning"`
+		InjectionSuspected bool   `json:"injectionSuspected"`
+		RequireHuman       bool   `json:"requireHuman"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return tickets.ReplyGuardOutcome{}, fmt.Errorf("decode reply-guard response: %w", err)
+	}
+
+	confidence := tickets.Confidence(wire.Confidence)
+	if !confidence.Valid() {
+		return tickets.ReplyGuardOutcome{}, fmt.Errorf("reply-guard returned invalid confidence %q", wire.Confidence)
+	}
+
+	findings := make([]tickets.ReplyGuardFinding, len(wire.Findings))
+	for i, f := range wire.Findings {
+		findings[i] = tickets.ReplyGuardFinding{Policy: f.Policy, Severity: f.Severity, Issue: f.Issue, Quote: f.Quote}
+	}
+
+	return tickets.ReplyGuardOutcome{
+		Verdict:            wire.Verdict,
+		Findings:           findings,
+		Confidence:         confidence,
+		Reasoning:          wire.Reasoning,
+		InjectionSuspected: wire.InjectionSuspected,
+		RequireHuman:       wire.RequireHuman,
+	}, nil
 }

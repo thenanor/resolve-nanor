@@ -197,6 +197,16 @@ paths:
     post:
       tags: [tickets]
       summary: Add a comment to a ticket
+      description: >-
+        For internal:false comments not sourced from a canned response,
+        reply-guard reviews the body synchronously before the comment is
+        created — see REPLYGUARD-1. A send verdict returns 201 with
+        guardResult populated; a revise verdict without overrideReason, or
+        an escalate verdict (which can never be overridden), returns 409
+        with the guard findings and no comment created; a failed guard call
+        returns 502 and no comment created. internal:true comments and
+        fromCannedResponse:true comments skip the guard entirely and always
+        return 201 with guardResult: null.
       parameters:
         - $ref: "#/components/parameters/TicketId"
         - $ref: "#/components/parameters/XActor"
@@ -217,6 +227,10 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/GuardUnavailable"
 
   /tickets/{id}/audit:
     get:
@@ -414,6 +428,23 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: >-
+        Reply-guard rejected this reply (verdict revise with no
+        overrideReason, or verdict escalate) — no comment was created.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    GuardUnavailable:
+      description: >-
+        The reply-guard service could not complete its review (unreachable,
+        non-2xx response, or malformed output) — fails closed; no comment
+        was created.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
     ErrorResponse:
@@ -488,6 +519,20 @@ components:
           type: boolean
           default: false
           description: Internal notes are agent-only, never exposed to customers.
+        fromCannedResponse:
+          type: boolean
+          default: false
+          description: >-
+            Set when the submitted body is unedited from an inserted canned
+            response — skips reply-guard review entirely (REPLYGUARD-1
+            AC-4). Has no effect when internal is true. Never persisted.
+        overrideReason:
+          type: string
+          description: >-
+            Required to create the comment when reply-guard's verdict was
+            revise; has no effect on any other verdict (REPLYGUARD-1
+            AC-19). Has no effect when internal or fromCannedResponse is
+            true.
 
     Comment:
       type: object
@@ -503,6 +548,15 @@ components:
         at:
           type: string
           format: date-time
+        guardResult:
+          allOf:
+            - $ref: "#/components/schemas/GuardResult"
+          nullable: true
+          description: >-
+            Reply-guard's assessment, present only on the Comment returned
+            immediately by POST /tickets/{id}/comments when the guard
+            actually ran (REPLYGUARD-1). Never persisted — always null on a
+            Comment read back later, e.g. embedded in Ticket.comments.
 
     Ticket:
       type: object
@@ -548,6 +602,59 @@ components:
             - $ref: "#/components/schemas/Priority"
           nullable: true
           description: A low-confidence triage suggestion awaiting human review.
+
+    Verdict:
+      type: string
+      description: reply-guard's recommendation for a candidate reply.
+      enum: [send, revise, escalate]
+
+    Policy:
+      type: string
+      description: Which reply-policy line a Finding is about.
+      enum: [disclosure, commitment, answer, tone]
+
+    Severity:
+      type: string
+      description: >-
+        How bad one Finding is, independent of which Policy line it's
+        under.
+      enum: [low, medium, high]
+
+    Finding:
+      type: object
+      properties:
+        policy:
+          $ref: "#/components/schemas/Policy"
+        severity:
+          $ref: "#/components/schemas/Severity"
+        issue:
+          type: string
+        quote:
+          type: string
+          description: >-
+            A literal, contiguous substring of the candidate reply's body
+            that triggered this finding — never a paraphrase.
+
+    GuardResult:
+      type: object
+      properties:
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        confidence:
+          $ref: "#/components/schemas/Confidence"
+        reasoning:
+          type: string
+        injectionSuspected:
+          type: boolean
+        requireHuman:
+          type: boolean
+          description: >-
+            True when a second human (not just the replying agent) should
+            review before sending.
 
     AuditEntry:
       type: object

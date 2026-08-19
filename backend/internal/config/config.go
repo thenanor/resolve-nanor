@@ -20,6 +20,14 @@ type Config struct {
 	// MainAppURL is where cmd/triage reaches the main app to write a
 	// classification result back (POST /tickets/{id}/triage).
 	MainAppURL string
+	// ReplyGuardPort is the port cmd/replyguard listens on.
+	ReplyGuardPort string
+	// ReplyGuardServiceURL is where cmd/api reaches the reply-guard
+	// service: a synchronous POST /guard call from
+	// tickets.Service.AddComment's reply-guard gate (see the
+	// httpReplyGuardClient adapter in cmd/api/main.go), which blocks
+	// comment creation on the response.
+	ReplyGuardServiceURL string
 }
 
 func Load() Config {
@@ -31,6 +39,9 @@ func Load() Config {
 		TriagePort:       getEnv("TRIAGE_PORT", "3001"),
 		TriageServiceURL: getEnv("TRIAGE_SERVICE_URL", "http://localhost:3001"),
 		MainAppURL:       getEnv("MAIN_APP_URL", "http://localhost:3000"),
+
+		ReplyGuardPort:       getEnv("REPLYGUARD_PORT", "3002"),
+		ReplyGuardServiceURL: getEnv("REPLYGUARD_SERVICE_URL", "http://localhost:3002"),
 	}
 }
 
