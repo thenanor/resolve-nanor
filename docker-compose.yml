@@ -39,7 +39,7 @@ services:
     ports:
       - "${TRIAGE_PORT:-3001}:3001"
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       TRIAGE_PORT: 3001
       MAIN_APP_URL: http://app:3000
 
